@@ -3,17 +3,15 @@
 use aniimax::models::{FacilityCounts, ProductionItem};
 
 fn default_facility_counts() -> FacilityCounts {
-    FacilityCounts {
-        farmland: (4, 3),
-        woodland: (2, 2),
-        mineral_pile: (1, 1),
-        carousel_mill: (2, 2),
-        jukebox_dryer: (1, 1),
-        crafting_table: (1, 1),
-        dance_pad_polisher: (1, 1),
-        aniipod_maker: (1, 1),
-        nimbus_bed: (1, 1),
-    }
+    FacilityCounts::from_pairs(&[
+        ("Farmland", 4, 3),
+        ("Woodland", 2, 2),
+        ("Mineral Pile", 1, 1),
+        ("Carousel Mill", 2, 2),
+        ("Jukebox Dryer", 1, 1),
+        ("Crafting Table", 1, 1),
+        ("Nimbus Bed", 1, 1),
+    ])
 }
 
 #[test]
@@ -73,6 +71,8 @@ fn test_production_item_creation() {
         facility_level: 1,
         module_requirement: None,
         requires_fertilizer: false,
+        workload: None,
+        byproduct: None,
     };
 
     assert_eq!(item.name, "wheat");
@@ -98,6 +98,8 @@ fn test_processed_item_creation() {
         facility_level: 1,
         module_requirement: None,
         requires_fertilizer: false,
+        workload: None,
+        byproduct: None,
     };
 
     assert_eq!(item.name, "wheatmeal");
