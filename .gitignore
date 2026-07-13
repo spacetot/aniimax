@@ -24,3 +24,6 @@ web/pkg/
 
 # Local Claude Code dev-server config
 .claude/
+
+# Internal design/change-log notes, kept outside the repo
+BETA_NOTES.md
