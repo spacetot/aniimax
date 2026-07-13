@@ -21,3 +21,6 @@ target
 #.idea/
 # WASM build output
 web/pkg/
+
+# Local Claude Code dev-server config
+.claude/

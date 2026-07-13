@@ -48,8 +48,8 @@ fn test_currency_types() {
 
     for item in &items {
         assert!(
-            item.sell_currency == "coins" || item.sell_currency == "coupons",
-            "Currency should be 'coins' or 'coupons', got: {}",
+            item.sell_currency == "coins" || item.sell_currency == "bud_tickets",
+            "Currency should be 'coins' or 'bud_tickets', got: {}",
             item.sell_currency
         );
     }

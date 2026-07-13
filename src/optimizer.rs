@@ -6,8 +6,11 @@
 
 use std::collections::{HashMap, HashSet};
 
+use microlp::{ComparisonOp, OptimizationDirection, Problem};
+
 use crate::models::{
-    EnergyItemEfficiency, FacilityCounts, ModuleLevels, ProductionEfficiency, ProductionItem, ProductionPath,
+    EnergyItemEfficiency, GoalResult, PlanProduct, PlanStep, PlanStepStatus, ProductionPlan,
+    FacilityCounts, ModuleLevels, ProductionEfficiency, ProductionItem, ProductionPath,
     ProductionStep,
 };
 
@@ -302,8 +305,133 @@ struct ProductionRequirements {
     is_valid: bool,
 }
 
+/// Resolves a raw material name to the actual item that would supply it, preferring the quick_
+/// variant when it exists and is usable — same substitution rule used everywhere else raw
+/// material names are resolved. Keys the item map by owned `String` since that's what
+/// `calculate_efficiencies` and the resource-demand functions below use.
+fn resolve_raw_material<'a>(
+    name: &str,
+    item_map: &HashMap<String, &'a ProductionItem>,
+    facility_counts: &FacilityCounts,
+    module_levels: &ModuleLevels,
+) -> Option<&'a ProductionItem> {
+    let high_speed_name = format!("quick_{}", name);
+    if let Some(&hs) = item_map.get(&high_speed_name) {
+        let can_use = hs
+            .module_requirement
+            .as_ref()
+            .map_or(true, |(m, l)| module_levels.can_use(m, *l));
+        let can_produce = facility_counts.can_produce(&hs.facility, hs.facility_level);
+        if can_use && can_produce {
+            return Some(hs);
+        }
+    }
+    item_map.get(name).copied()
+}
+
+/// Walks `item`'s full ingredient tree, accumulating — per FACILITY touched anywhere in the
+/// tree, including `item`'s own facility — total *utilization*: batches/sec of whatever runs
+/// there, weighted by that item's own `production_time`, required per one batch/sec of the
+/// tree's root. Utilization (a dimensionless "fraction of one facility's continuous operation")
+/// is what makes sharing correct in every shape it comes in, because it's always additive:
+///
+/// - The same item needed via two different branches — soy_sauce_tofu needs both soy_sauce
+///   (Bouncy Brew Keg) and tofu (Carousel Mill), and both independently need soybean from the
+///   same Farmland. Computing each branch's rate in isolation (the old approach) let each assume
+///   it alone could draw all 20 Farmland's worth of soybean, silently doubling the effective
+///   rate. Here both branches' soybean utilization lands in the same `Farmland` entry and sums.
+/// - Two DIFFERENT items hosted at the same facility for the same chain — e.g. Claw Game Cooker
+///   both turning sugarcane into rock_candy AND assembling rock_candy+tofu into tofu_cake, or
+///   Woodland growing both coconut and lemon for a soap recipe. These aren't the same item, but
+///   they're still time-sharing one facility's capacity, so their utilization sums too.
+///
+/// Keying by facility (not item name) is what makes both cases fall out of one formula instead
+/// of needing separate handling.
+fn accumulate_demand<'a>(
+    item: &'a ProductionItem,
+    ratio: f64,
+    item_map: &HashMap<String, &'a ProductionItem>,
+    facility_counts: &FacilityCounts,
+    module_levels: &ModuleLevels,
+    demand: &mut HashMap<&'a str, (f64, Vec<&'a ProductionItem>)>,
+    depth: u32,
+) {
+    if depth > 8 {
+        return; // guard against unexpected circular references
+    }
+    let entry = demand.entry(item.facility.as_str()).or_insert((0.0, Vec::new()));
+    entry.0 += ratio * item.production_time;
+    if !entry.1.iter().any(|hosted| hosted.name == item.name) {
+        entry.1.push(item);
+    }
+    let Some(ref raw_mats) = item.raw_materials else {
+        return;
+    };
+    let required_amounts = item.required_amount.as_deref().unwrap_or(&[]);
+    for (i, raw_mat) in raw_mats.iter().enumerate() {
+        let Some(resolved) = resolve_raw_material(raw_mat, item_map, facility_counts, module_levels)
+        else {
+            continue;
+        };
+        let required_per_batch = required_amounts.get(i).copied().unwrap_or(1) as f64;
+        if required_per_batch <= 0.0 {
+            continue;
+        }
+        let sub_ratio = ratio * required_per_batch / resolved.yield_amount as f64;
+        accumulate_demand(
+            resolved,
+            sub_ratio,
+            item_map,
+            facility_counts,
+            module_levels,
+            demand,
+            depth + 1,
+        );
+    }
+}
+
+/// Convenience wrapper around [`accumulate_demand`] that returns the completed demand map for
+/// `item`'s whole ingredient tree, rooted at `item` itself (ratio 1.0).
+fn compute_resource_demand<'a>(
+    item: &'a ProductionItem,
+    item_map: &HashMap<String, &'a ProductionItem>,
+    facility_counts: &FacilityCounts,
+    module_levels: &ModuleLevels,
+) -> HashMap<&'a str, (f64, Vec<&'a ProductionItem>)> {
+    let mut demand = HashMap::new();
+    accumulate_demand(item, 1.0, item_map, facility_counts, module_levels, &mut demand, 0);
+    demand
+}
+
+/// The true bottleneck-limited batches/sec achievable at the root of a resource-demand map: the
+/// minimum, over every facility touched anywhere in the tree, of that facility's own batch
+/// capacity divided by its accumulated utilization (see [`accumulate_demand`]) — a facility
+/// touched by only one item reduces to the familiar `facility_count / production_time /
+/// required_per_batch`; a facility touched by multiple items (whether the same item via
+/// different branches, or different items time-sharing it) gets their utilization summed
+/// automatically, since they share one entry in the map.
+fn batch_rate_bound(
+    demand: &HashMap<&str, (f64, Vec<&ProductionItem>)>,
+    facility_counts: &FacilityCounts,
+) -> f64 {
+    demand
+        .iter()
+        .map(|(facility, (utilization, _))| {
+            if *utilization <= 0.0 {
+                return f64::INFINITY;
+            }
+            let count = facility_counts.get_count(facility) as f64;
+            if count <= 0.0 {
+                0.0
+            } else {
+                count / utilization
+            }
+        })
+        .fold(f64::INFINITY, f64::min)
+}
+
 /// Recursively calculates production requirements for an item.
-/// 
+///
 /// This handles both simple raw materials and processed items that may
 /// require other processed items as ingredients (e.g., caramel_nut_chips requires nuts).
 fn calculate_item_requirements(
@@ -330,12 +458,13 @@ fn calculate_item_requirements(
         };
     }
     
-    // Try to find the best variant of this item (check high_speed_ variant first)
-    let high_speed_name = format!("high_speed_{}", item_name);
+    // Try to find the best variant of this item (check quick_ variant first — new-beta name
+    // for what used to be the high_speed_ variant)
+    let high_speed_name = format!("quick_{}", item_name);
     let (item, actual_name) = {
-        // Check if high_speed variant exists and is usable
+        // Check if quick_ variant exists and is usable
         if let Some(hs_item) = item_map.get(&high_speed_name) {
-            // Verify we can use the high_speed variant (check module requirements)
+            // Verify we can use the quick_ variant (check module requirements)
             let can_use_hs = if let Some((ref module_name, required_level)) = hs_item.module_requirement {
                 module_levels.can_use(module_name, required_level)
             } else {
@@ -343,9 +472,9 @@ fn calculate_item_requirements(
             };
             // Also check facility requirements
             let can_produce_hs = facility_counts.can_produce(&hs_item.facility, hs_item.facility_level);
-            
+
             if can_use_hs && can_produce_hs {
-                // Use high_speed variant - it produces more in same/less time
+                // Use quick_ variant - it produces more in same/less time
                 (*hs_item, high_speed_name.as_str())
             } else if let Some(base_item) = item_map.get(item_name) {
                 // Fall back to base variant
@@ -496,7 +625,7 @@ fn calculate_item_requirements(
             
             // If this ingredient is itself a processed item, add it as an intermediate step
             // Check by looking up the item and seeing if it has raw_materials
-            let high_speed_mat = format!("high_speed_{}", raw_mat);
+            let high_speed_mat = format!("quick_{}", raw_mat);
             let mat_item = item_map.get(&high_speed_mat)
                 .filter(|hs| {
                     let can_use = if let Some((ref m, l)) = hs.module_requirement {
@@ -590,7 +719,7 @@ fn calculate_item_requirements(
 /// # Arguments
 ///
 /// * `items` - All available production items
-/// * `target_currency` - The currency to optimize for ("coins" or "coupons")
+/// * `target_currency` - The currency to optimize for ("coins" or "bud_tickets")
 /// * `facility_counts` - Configuration for each facility (count and level)
 /// * `module_levels` - Configuration for each item upgrade module level
 ///
@@ -615,17 +744,15 @@ fn calculate_item_requirements(
 /// use std::path::Path;
 ///
 /// let items = load_all_data(Path::new("data")).unwrap();
-/// let counts = FacilityCounts {
-///     farmland: (4, 3),        // 4 farmlands at level 3
-///     woodland: (1, 2),        // 1 woodland at level 2
-///     mineral_pile: (1, 1),    // 1 mineral pile at level 1
-///     carousel_mill: (2, 2),   // 2 carousel mills at level 2
-///     jukebox_dryer: (1, 1),
-///     crafting_table: (1, 1),
-///     dance_pad_polisher: (1, 1),
-///     aniipod_maker: (1, 1),
-///     nimbus_bed: (1, 1),      // 1 nimbus bed (for fertilizer)
-/// };
+/// let counts = FacilityCounts::from_pairs(&[
+///     ("Farmland", 4, 3),        // 4 farmlands at level 3
+///     ("Woodland", 1, 2),        // 1 woodland at level 2
+///     ("Mineral Pile", 1, 1),    // 1 mineral pile at level 1
+///     ("Carousel Mill", 2, 2),   // 2 carousel mills at level 2
+///     ("Jukebox Dryer", 1, 1),
+///     ("Crafting Table", 1, 1),
+///     ("Nimbus Bed", 1, 1),      // 1 nimbus bed (Wool/Petals)
+/// ]);
 /// let modules = ModuleLevels::default();
 ///
 /// let efficiencies = calculate_efficiencies(&items, "coins", &counts, &modules);
@@ -674,7 +801,7 @@ pub fn calculate_efficiencies(
             continue;
         }
 
-        let (total_time, steady_state_time, total_energy, raw_cost, requires_raw, raw_facility, all_facilities, intermediate_steps, raw_material_details, fertilizer_per_batch) =
+        let (total_time, steady_state_time, total_energy, raw_cost, requires_raw, raw_facility, all_facilities, intermediate_steps, raw_material_details, fertilizer_per_batch, facility_demand) =
             if let Some(ref raw_mats) = item.raw_materials {
                 // This is a processed item - use recursive calculation to handle nested dependencies
                 let required_amounts = item.required_amount.as_ref().map(|v| v.as_slice()).unwrap_or(&[]);
@@ -739,7 +866,7 @@ pub fn calculate_efficiencies(
                     all_intermediate_steps.extend(reqs.intermediate_steps);
                     
                     // If this raw_mat is itself a processed item, add it as an intermediate step
-                    let high_speed_name = format!("high_speed_{}", raw_mat);
+                    let high_speed_name = format!("quick_{}", raw_mat);
                     let mat_item = item_map.get(&high_speed_name)
                         .filter(|hs| {
                             let can_use = if let Some((ref m, l)) = hs.module_requirement {
@@ -793,60 +920,59 @@ pub fn calculate_efficiencies(
                 // rate = (yield per batch × facility_count) / batch_time / required_per_processed_batch
                 // This gives us "processed batches worth of materials per second"
                 
-                // Calculate gathering rate: processed_batches_worth per second
-                // We assume all raw materials come from the same facility type for simplicity
-                // (This is true for most recipes like super_wheatmeal)
-                let mut gathering_batches_per_second = f64::INFINITY;
-                
+                // Collect raw material details (for the same-facility multi-material allocation
+                // feature, e.g. dried_flowers' lavender+rose both from Farmland) and fertilizer
+                // requirements. The actual bottleneck-limited rate is computed separately below,
+                // via the whole-tree resource-demand walk — NOT per-ingredient here — because two
+                // ingredients can independently need the same deeper raw material (see
+                // `accumulate_demand`'s doc comment), which a per-ingredient loop can't detect.
                 for (i, raw_mat) in raw_mats.iter().enumerate() {
                     let required_per_batch = required_amounts.get(i).copied().unwrap_or(1) as f64;
-                    
-                    // Find the raw material item to get its production rate
-                    let high_speed_name = format!("high_speed_{}", raw_mat);
-                    let raw_item = if let Some(hs) = item_map.get(&high_speed_name) {
-                        if let Some((ref module_name, required_level)) = hs.module_requirement {
-                            if module_levels.can_use(module_name, required_level) { Some(*hs) } else { item_map.get(raw_mat.as_str()).copied() }
-                        } else { Some(*hs) }
-                    } else {
-                        item_map.get(raw_mat.as_str()).copied()
+                    let Some(raw) =
+                        resolve_raw_material(raw_mat, &item_map, facility_counts, module_levels)
+                    else {
+                        continue;
                     };
-                    
-                    if let Some(raw) = raw_item {
-                        let raw_facility_count = facility_counts.get_count(&raw.facility) as f64;
-                        // Units produced per second by all facilities for this raw material
-                        let units_per_second = (raw.yield_amount as f64 * raw_facility_count) / raw.production_time;
-                        // Convert to "processed batches worth" per second
-                        let batches_worth_per_second = units_per_second / required_per_batch;
-                        gathering_batches_per_second = gathering_batches_per_second.min(batches_worth_per_second);
-                        
-                        // Collect raw material details for optimal allocation calculation
-                        // Only include materials from the primary facility (for allocation to make sense)
-                        // (name, amount_per_batch, time_per_batch, facility)
-                        raw_material_details_collected.push((
-                            raw.name.clone(),
-                            required_per_batch as u32,
-                            raw.production_time,
-                            raw.facility.clone(),
-                        ));
-                        
-                        // Track fertilizer requirements
-                        // Each batch of a fertilizer-requiring crop needs 1 fertilizer
-                        // We need ceil(required_per_batch / yield) batches of raw material
-                        if raw.requires_fertilizer {
-                            let raw_batches_needed = (required_per_batch / raw.yield_amount as f64).ceil() as u32;
-                            fertilizer_per_batch += raw_batches_needed;
-                        }
+
+                    // Collect raw material details for optimal allocation calculation
+                    // Only include materials from the primary facility (for allocation to make sense)
+                    // (name, amount_per_batch, time_per_batch, facility)
+                    raw_material_details_collected.push((
+                        raw.name.clone(),
+                        required_per_batch as u32,
+                        raw.production_time,
+                        raw.facility.clone(),
+                    ));
+
+                    // Track fertilizer requirements
+                    // Each batch of a fertilizer-requiring crop needs 1 fertilizer
+                    // We need ceil(required_per_batch / yield) batches of raw material
+                    if raw.requires_fertilizer {
+                        let raw_batches_needed = (required_per_batch / raw.yield_amount as f64).ceil() as u32;
+                        fertilizer_per_batch += raw_batches_needed;
                     }
                 }
-                
-                // Processing rate: processed batches per second
-                let processing_batches_per_second = processing_facility_count / processing_time_per_mill;
-                
-                // Steady-state rate is the minimum (bottleneck)
-                let batches_per_second = gathering_batches_per_second.min(processing_batches_per_second);
-                let steady_state_time = if batches_per_second > 0.0 && batches_per_second.is_finite() { 
-                    1.0 / batches_per_second 
-                } else { 
+
+                // True bottleneck-limited rate for this item: walks the whole ingredient tree and
+                // takes the minimum capacity/demand ratio over every facility touched anywhere in
+                // it (including this item's own processing facility, and any raw material shared
+                // across multiple branches) — see `compute_resource_demand`/`batch_rate_bound`.
+                let demand = compute_resource_demand(item, &item_map, facility_counts, module_levels);
+                let batches_per_second = batch_rate_bound(&demand, facility_counts);
+                let facility_demand: Vec<(String, f64, Vec<String>)> = demand
+                    .into_iter()
+                    .map(|(facility, (utilization, items))| {
+                        (
+                            facility.to_string(),
+                            utilization,
+                            items.into_iter().map(|i| i.name.clone()).collect(),
+                        )
+                    })
+                    .collect();
+
+                let steady_state_time = if batches_per_second > 0.0 && batches_per_second.is_finite() {
+                    1.0 / batches_per_second
+                } else {
                     f64::INFINITY 
                 };
                 
@@ -897,6 +1023,7 @@ pub fn calculate_efficiencies(
                     all_intermediate_steps,
                     raw_details,
                     fertilizer_per_batch,
+                    facility_demand,
                 )
             } else {
                 // This is a raw material - direct production
@@ -926,7 +1053,7 @@ pub fn calculate_efficiencies(
                 // For raw materials, 1 fertilizer per batch if required
                 let raw_fertilizer = if item.requires_fertilizer { 1u32 } else { 0u32 };
 
-                (effective_time_per_yield, steady_state_time, energy_per_batch, cost_per_batch, None, None, raw_all_facilities, vec![], None, raw_fertilizer)
+                (effective_time_per_yield, steady_state_time, energy_per_batch, cost_per_batch, None, None, raw_all_facilities, vec![], None, raw_fertilizer, vec![(item.facility.clone(), item.production_time, vec![item.name.clone()])])
             };
 
         let net_profit = item.sell_value * item.yield_amount as f64 - raw_cost;
@@ -962,6 +1089,7 @@ pub fn calculate_efficiencies(
             effective_profit_per_second,
             raw_material_details,
             fertilizer_per_batch,
+            facility_demand,
         });
     }
 
@@ -1000,17 +1128,15 @@ pub fn calculate_efficiencies(
 /// use std::path::Path;
 ///
 /// let items = load_all_data(Path::new("data")).unwrap();
-/// let counts = FacilityCounts {
-///     farmland: (4, 3),        // 4 farmlands at level 3
-///     woodland: (1, 2),        // 1 woodland at level 2
-///     mineral_pile: (1, 1),    // 1 mineral pile at level 1
-///     carousel_mill: (2, 2),   // 2 carousel mills at level 2
-///     jukebox_dryer: (1, 1),
-///     crafting_table: (1, 1),
-///     dance_pad_polisher: (1, 1),
-///     aniipod_maker: (1, 1),
-///     nimbus_bed: (1, 1),      // 1 nimbus bed (for fertilizer)
-/// };
+/// let counts = FacilityCounts::from_pairs(&[
+///     ("Farmland", 4, 3),        // 4 farmlands at level 3
+///     ("Woodland", 1, 2),        // 1 woodland at level 2
+///     ("Mineral Pile", 1, 1),    // 1 mineral pile at level 1
+///     ("Carousel Mill", 2, 2),   // 2 carousel mills at level 2
+///     ("Jukebox Dryer", 1, 1),
+///     ("Crafting Table", 1, 1),
+///     ("Nimbus Bed", 1, 1),      // 1 nimbus bed (Wool/Petals)
+/// ]);
 /// let modules = ModuleLevels::default();
 ///
 /// let efficiencies = calculate_efficiencies(&items, "coins", &counts, &modules);
@@ -1793,5 +1919,789 @@ pub fn find_self_sufficient_path(
         is_energy_self_sufficient: true,
         energy_items_produced: Some(energy_batches * best_energy.item.yield_amount),
         energy_item_name: Some(best_energy.item.name.clone()),
+    })
+}
+
+/// Finds the fastest way to reach a target coin balance, given the current balance, by running
+/// a conflict-free set of coin-producing items simultaneously across every owned facility.
+///
+/// # Approach
+///
+/// Greedy set-packing by rate, same pattern as [`find_parallel_production_path`]: sort every
+/// candidate item (across all facilities, not just one per facility) by
+/// `effective_profit_per_second` descending, then walk the list claiming facilities as items are
+/// selected. An item is only selected if EVERY facility its production chain touches
+/// (`eff.all_facilities` — its own facility plus any raw-material/intermediate facilities) is
+/// still unclaimed; selecting it claims all of them.
+///
+/// This matters because `calculate_efficiencies` computes a processed item's rate assuming the
+/// *entire* owned count of its raw-material facility is dedicated to gathering that ingredient
+/// (see its "gathering rate" comment) — e.g. Bouncy Brew Keg's rice_drink assumes all of
+/// Farmland is growing rice for it. Picking the best item independently per facility (the
+/// previous approach) ignored this: Farmland could simultaneously be told to grow strawberries
+/// (its own best standalone item) *and* be silently assumed to supply rice_drink's rice, which
+/// isn't physically possible with one Farmland. The greedy claim step prevents that: once
+/// rice_drink claims Farmland, Farmland's own standalone candidates (strawberries, etc.) are
+/// skipped since Farmland is no longer free.
+///
+/// Completion time is NOT simply `delta_coins / total_rate` — that would assume every selected
+/// item is already at steady-state output from t=0, ignoring that a processed item's ingredients
+/// have to actually grow/gather before the first batch can even be processed (rice_drink can't
+/// sell anything until rice has grown *and* been through Bouncy Brew Keg once). Each selected
+/// item instead contributes `rate * max(0, t - lead_time)`: nothing until its own first-batch
+/// lead time (`item_lead_time`) has passed, then steady-state income after that — a hybrid of
+/// "everything starts at once" (still true — every facility begins working in parallel at t=0)
+/// and "nothing is instant" (each item's income stream is delayed by its own pipeline depth, not
+/// by everyone else's). Coins accumulated by time `t` is the sum of that across every selected
+/// item, which is monotonically non-decreasing and piecewise-linear in `t`, so the minimal `t`
+/// reaching `delta_coins` is found by binary search (same doubling-then-bisecting pattern used
+/// by the removed multi-resource version of this function — see history below). Since using more
+/// facilities always helps (never hurts) reach the target sooner, the minimal plan still uses
+/// every claimable facility for the full duration.
+///
+/// # History
+///
+/// This originally optimized for coins + Wood Blocks + Mineral Sand simultaneously (an RV/
+/// Homeland level-up costs all three), with Wood Blocks/Mineral Sand production facilities
+/// dedicated to byproduct income and a Resource Exchange integration to cover shortfalls. That
+/// made some facilities' coin output "extra" (already covered by byproduct side-income from a
+/// long Wood-Blocks-driven duration), which is where the `NotNeeded` status on `PlanStep`
+/// came from. Dropped in `BETA_NOTES.md` section 30 — Wood Blocks/Mineral Sand are trivially
+/// obtained by expanding plots in-game, so they weren't worth optimizing for. Section 31 then
+/// replaced the naive best-per-facility selection with the greedy claim-based approach described
+/// above, after it was caught recommending a facility for its own best item while also assuming
+/// (elsewhere) that the same facility fully supplied another item's ingredients. See sections 23,
+/// 27, and 29 for the full history of the removed multi-resource design.
+/// Time (seconds) until the very first batch of `name` is ready — the growing/gathering lead
+/// time before any output (and thus any coin income) exists at all, as opposed to the
+/// steady-state throughput rate used everywhere else in this module.
+///
+/// For a raw material this is just `production_time` (every owned copy of the facility starts
+/// at t=0 and finishes its first batch together, regardless of facility count — more facilities
+/// mean more *batches per completion*, not a faster *first* completion). For a processed item
+/// it's the slowest ingredient's own lead time, plus this item's own processing time on top
+/// (ingredients are gathered in parallel with each other, but processing can't start on an
+/// ingredient before that ingredient exists). Recurses for multi-level chains (e.g. nuts, itself
+/// processed, used as an ingredient in caramel_nut_chips).
+///
+/// Deliberately ignores facility count and the fertilizer add-on time (both already folded into
+/// `ProductionEfficiency::startup_time`, which this does NOT reuse — that field divides
+/// processing time by facility count, which is right for steady-state throughput but wrong for
+/// "time until the first batch exists", the thing this function needs).
+fn item_lead_time(name: &str, item_map: &HashMap<&str, &ProductionItem>, depth: u32) -> f64 {
+    if depth > 8 {
+        return 0.0; // guard against unexpected circular references
+    }
+    let Some(item) = item_map.get(name) else {
+        return 0.0;
+    };
+    match &item.raw_materials {
+        None => item.production_time,
+        Some(raw_mats) => {
+            let max_ingredient_lead = raw_mats
+                .iter()
+                .map(|m| item_lead_time(m, item_map, depth + 1))
+                .fold(0.0_f64, f64::max);
+            max_ingredient_lead + item.production_time
+        }
+    }
+}
+
+/// Solves for the provably-optimal simultaneous allocation of every owned facility's capacity
+/// across every candidate item — replacing the old greedy-plus-leftover-patches approach (three
+/// separate mechanisms accumulated over this project's history, each added to fix one more
+/// scenario the previous ones missed) with a linear program: maximize total coins/sec subject to
+/// no facility's capacity being oversubscribed.
+///
+/// `eff.facility_demand` (see `compute_resource_demand`) already gives exactly the constraint
+/// coefficients needed: for item `i` and facility `f`, how much of `f`'s batch capacity one
+/// batch/sec of `i` consumes. That's the entire LP — one variable per item (its batches/sec,
+/// coefficient = net profit per batch, ≥ 0), one constraint per owned facility (sum of
+/// utilization × rate across every item touching it ≤ that facility's count). A facility ending
+/// up split between multiple items falls out of the solution naturally whenever that's optimal —
+/// no separate "leftover" bookkeeping needed, and no dependency on the order items happen to be
+/// considered in, since every variable is solved for simultaneously.
+///
+/// Returns batches/sec for every item whose solved rate is above a negligible threshold, keyed by
+/// item name.
+fn solve_facility_allocation<'a>(
+    effs: &'a [ProductionEfficiency],
+    facility_counts: &FacilityCounts,
+) -> HashMap<&'a str, f64> {
+    let mut problem = Problem::new(OptimizationDirection::Maximize);
+
+    // One column per candidate item with positive net profit — anything else can never help the
+    // objective (its coefficient would be ≤ 0), so excluding it up front keeps the problem small
+    // without changing the optimal solution.
+    let mut item_vars: Vec<(&'a ProductionEfficiency, microlp::Variable)> = Vec::new();
+    for eff in effs {
+        if facility_counts.get_count(&eff.item.facility) == 0 {
+            continue;
+        }
+        let net_profit_per_batch = eff.item.sell_value * eff.item.yield_amount as f64 - eff.raw_cost;
+        if net_profit_per_batch <= 0.0 {
+            continue;
+        }
+        let var = problem.add_var(net_profit_per_batch, (0.0, f64::INFINITY));
+        item_vars.push((eff, var));
+    }
+
+    // One row per owned facility touched by at least one candidate: total utilization across
+    // every item using it can't exceed its batch capacity.
+    let mut facility_names: HashSet<&str> = HashSet::new();
+    for (eff, _) in &item_vars {
+        for (facility, _, _) in &eff.facility_demand {
+            facility_names.insert(facility.as_str());
+        }
+    }
+    for facility in facility_names {
+        // No lower bound skip here on purpose: a facility you own zero of must still get a
+        // constraint (capacity 0), not no constraint at all — skipping it here would let the LP
+        // treat "you don't own this" as "unlimited supply of it" instead of "none available".
+        let capacity = facility_counts.get_count(facility) as f64;
+        let terms: Vec<(microlp::Variable, f64)> = item_vars
+            .iter()
+            .filter_map(|(eff, var)| {
+                eff.facility_demand
+                    .iter()
+                    .find(|(f, _, _)| f == facility)
+                    .map(|(_, utilization, _)| (*var, *utilization))
+            })
+            .collect();
+        if terms.is_empty() {
+            continue;
+        }
+        problem.add_constraint(&terms, ComparisonOp::Le, capacity);
+    }
+
+    // Every variable is bounded by at least its own facility's constraint (facility_demand always
+    // includes the item's own facility — see `accumulate_demand`), and every constraint's RHS is
+    // a non-negative facility count, so this should always be feasible and bounded. Degrade to
+    // "nothing selected" rather than panic if that assumption is ever wrong.
+    let Ok(solution) = problem.solve() else {
+        return HashMap::new();
+    };
+
+    item_vars
+        .into_iter()
+        .filter_map(|(eff, var)| {
+            let rate = solution[var];
+            if rate > 1e-9 {
+                Some((eff.item.name.as_str(), rate))
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+/// Converts fractional shares of a facility's capacity into whole facility counts, using the
+/// largest-remainder method (the same apportionment technique used to allocate parliament seats)
+/// so the rounded counts land as close as possible to the true fractions while still being
+/// integers — a player assigns a whole plot to a crop, not a percentage of one, so "78% funnels
+/// into X" isn't actionable the way "16 Farmland grow X" is. `fractions` need not sum to 1.0 (any
+/// shortfall is genuinely idle capacity, not an artifact of rounding); the returned counts sum to
+/// `round(fractions.sum() * total)`, not to `total` itself, for the same reason.
+fn apportion_counts(fractions: &[f64], total: u32) -> Vec<u32> {
+    let total_f = total as f64;
+    let ideal: Vec<f64> = fractions.iter().map(|f| f * total_f).collect();
+    let mut counts: Vec<u32> = ideal.iter().map(|v| v.floor() as u32).collect();
+    let target = ideal.iter().sum::<f64>().round() as u32;
+    let base: u32 = counts.iter().sum();
+    let remaining = target.saturating_sub(base) as usize;
+
+    let mut order: Vec<usize> = (0..ideal.len()).collect();
+    order.sort_by(|&a, &b| {
+        let remainder_a = ideal[a] - counts[a] as f64;
+        let remainder_b = ideal[b] - counts[b] as f64;
+        remainder_b.partial_cmp(&remainder_a).unwrap_or(std::cmp::Ordering::Equal)
+    });
+    for &i in order.iter().take(remaining) {
+        counts[i] += 1;
+    }
+    counts
+}
+
+/// A GROWER facility (Farmland, Woodland, Mineral Pile, ...) has every plot committed to one crop
+/// for its whole cycle — it structurally never hosts a processed item (see the data loaders in
+/// `data.rs`: `load_farmland`/`load_woodland`/`load_workload_raw_material`/`load_nimbus_bed`
+/// always set `raw_materials: None`; `load_processing_*` always set it to `Some`). A PROCESSOR
+/// facility (Claw Game Cooker, Carousel Mill, ...) has no such constraint — it processes whatever
+/// ingredients are ready, so genuinely cycling between recipes in whatever proportion their
+/// inputs allow is real, achievable behavior, not something that needs rounding.
+fn is_grower_facility(items: &[ProductionItem], name: &str) -> bool {
+    !items.iter().any(|it| it.facility == name && it.raw_materials.is_some())
+}
+
+/// Apportions every grower facility's continuous LP shares into authoritative whole-unit counts
+/// (see `apportion_counts`), one facility at a time. Keyed by owned `String` (facility, item name)
+/// rather than borrowing from `allocation`/`eff_by_name`, since this needs to be called against a
+/// *trial* candidate set that may get discarded (see `find_production_plan`'s stranded-chain exclusion
+/// loop) as well as the final settled one.
+fn build_grower_assignment(
+    items: &[ProductionItem],
+    allocation: &HashMap<&str, f64>,
+    eff_by_name: &HashMap<&str, &ProductionEfficiency>,
+    facility_counts: &FacilityCounts,
+) -> HashMap<(String, String), u32> {
+    let mut grower_shares: HashMap<&str, Vec<(&str, f64)>> = HashMap::new();
+    for (&name, &rate) in allocation {
+        let eff = eff_by_name[name];
+        for (facility, utilization, _) in &eff.facility_demand {
+            if !is_grower_facility(items, facility) {
+                continue;
+            }
+            let capacity = facility_counts.get_count(facility) as f64;
+            if capacity <= 0.0 {
+                continue;
+            }
+            let fraction = utilization * rate / capacity;
+            if fraction <= 0.0 {
+                continue;
+            }
+            grower_shares.entry(facility.as_str()).or_default().push((name, fraction));
+        }
+    }
+
+    let mut grower_assignment: HashMap<(String, String), u32> = HashMap::new();
+    for (&facility, shares) in &grower_shares {
+        let fractions: Vec<f64> = shares.iter().map(|(_, f)| *f).collect();
+        let counts = apportion_counts(&fractions, facility_counts.get_count(facility));
+        for (&(item_name, _), &count) in shares.iter().zip(&counts) {
+            grower_assignment.insert((facility.to_string(), item_name.to_string()), count);
+        }
+    }
+    grower_assignment
+}
+
+/// Caps an item's continuous LP rate by what its grower facilities can ACTUALLY supply once
+/// rounded to whole units (see `build_grower_assignment`). This is the only correction needed:
+/// the continuous rate already correctly accounts for fair sharing at every PROCESSOR facility
+/// (that's what solving the LP jointly rather than greedily buys us), so redoing that math
+/// independently per item here — instead of taking the min against the untouched continuous
+/// rate — would silently reintroduce the shared-resource double-counting bug fixed earlier this
+/// session (e.g. Claw Game Cooker's three-way split would let each item assume exclusive access
+/// to it again).
+fn final_rate_for(
+    items: &[ProductionItem],
+    eff: &ProductionEfficiency,
+    continuous_rate: f64,
+    grower_assignment: &HashMap<(String, String), u32>,
+) -> f64 {
+    eff.facility_demand
+        .iter()
+        .filter(|(f, _, _)| is_grower_facility(items, f))
+        .fold(continuous_rate, |bound, (facility, utilization, _)| {
+            if *utilization <= 0.0 {
+                return bound;
+            }
+            let assigned = grower_assignment
+                .get(&(facility.clone(), eff.item.name.clone()))
+                .copied()
+                .unwrap_or(0);
+            bound.min(assigned as f64 / utilization)
+        })
+}
+
+/// For every PROCESSOR facility touched by any candidate item with a positive final rate, the
+/// items using it and `(fraction of its capacity, rate_per_second)` — reused both to detect
+/// "genuine contention" (more distinct recipes wanting a facility than it has units — see
+/// `find_production_plan`'s exclusion loop, since a processor can only ever be dedicated to ONE
+/// recipe at a time, not fractionally time-shared between several) and to build the final
+/// `coin_items` facility-plan rows, so this logic isn't duplicated.
+///
+/// A useful invariant: for a facility used by only ONE item, that item's `fraction` is always
+/// `≤ 1`, because the LP's own capacity constraint (`Σ utilization × rate ≤ capacity`) is defined
+/// relative to that same `capacity` — a solo consumer's usage can never exceed what the
+/// constraint allows. So every contributor to a contended facility needs exactly one dedicated
+/// unit, never more.
+fn build_processor_usage<'a>(
+    items: &[ProductionItem],
+    allocation: &HashMap<&'a str, f64>,
+    eff_by_name: &HashMap<&'a str, &'a ProductionEfficiency>,
+    facility_counts: &FacilityCounts,
+    grower_assignment: &HashMap<(String, String), u32>,
+) -> HashMap<&'a str, Vec<(&'a ProductionEfficiency, f64, f64)>> {
+    let mut usage: HashMap<&str, Vec<(&ProductionEfficiency, f64, f64)>> = HashMap::new();
+    for (&name, &continuous_rate) in allocation {
+        let eff = eff_by_name[name];
+        let rate = final_rate_for(items, eff, continuous_rate, grower_assignment);
+        if rate <= 0.0 {
+            continue;
+        }
+        let net_profit_per_batch = eff.item.sell_value * eff.item.yield_amount as f64 - eff.raw_cost;
+        let rate_per_second = net_profit_per_batch * rate;
+        for (facility, utilization, _) in &eff.facility_demand {
+            if is_grower_facility(items, facility) {
+                continue;
+            }
+            let capacity = facility_counts.get_count(facility) as f64;
+            if capacity <= 0.0 {
+                continue;
+            }
+            let fraction = utilization * rate / capacity;
+            if fraction < 0.001 {
+                continue; // negligible, not worth reporting
+            }
+            usage.entry(facility.as_str()).or_default().push((eff, fraction, rate_per_second));
+        }
+    }
+    usage
+}
+
+/// Solves for the provably-optimal simultaneous use of every owned facility for one currency
+/// (`"coins"` or `"bud_tickets"`, matching `calculate_efficiencies`' `target_currency`) —
+/// target-independent: no goal amount is needed to know the best achievable rate and facility
+/// plan. Pass the result to `time_to_reach_goal` to find out how long a specific goal takes.
+pub fn find_production_plan(
+    items: &[ProductionItem],
+    currency: &str,
+    facility_counts: &FacilityCounts,
+    module_levels: &ModuleLevels,
+) -> Option<ProductionPlan> {
+    let item_map: HashMap<&str, &ProductionItem> =
+        items.iter().map(|i| (i.name.as_str(), i)).collect();
+
+    let effs = calculate_efficiencies(items, currency, facility_counts, module_levels);
+
+    // Solve for the provably-optimal simultaneous allocation of every owned facility's capacity
+    // across every candidate item — see `solve_facility_allocation`'s doc comment for why this
+    // replaces the old greedy-plus-leftover-patches approach entirely.
+    //
+    // A chain needing TWO OR MORE different grower facilities (e.g. maple_candy_star needs both
+    // Woodland's maple_syrup and Starfall Hammock's star) can get "stranded": each grower is
+    // apportioned independently (`build_grower_assignment`), so it's possible for one of them to
+    // round that chain's share all the way down to zero (its capacity going instead to something
+    // more valuable) while the OTHER grower still shows a whole-unit assignment to a chain that
+    // can now never actually produce anything. Detect that and re-solve with the dead chain
+    // excluded, so the LP finds the stranded facility's genuinely useful alternative instead of
+    // recommending a dedication to nothing — repeats until stable (each pass excludes at least
+    // one more item, and the candidate set is small, so this converges quickly).
+    let mut excluded: HashSet<String> = HashSet::new();
+    let candidates: Vec<ProductionEfficiency> = loop {
+        let trial: Vec<ProductionEfficiency> =
+            effs.iter().filter(|e| !excluded.contains(&e.item.name)).cloned().collect();
+        let trial_allocation = solve_facility_allocation(&trial, facility_counts);
+        if trial_allocation.is_empty() {
+            // Nothing profitable available anywhere — genuinely infeasible.
+            return None;
+        }
+        let trial_eff_by_name: HashMap<&str, &ProductionEfficiency> =
+            trial.iter().map(|e| (e.item.name.as_str(), e)).collect();
+        let trial_growers =
+            build_grower_assignment(items, &trial_allocation, &trial_eff_by_name, facility_counts);
+        let stranded: Vec<String> = trial_allocation
+            .iter()
+            .filter(|&(&name, &rate)| {
+                let eff = trial_eff_by_name[name];
+                final_rate_for(items, eff, rate, &trial_growers) <= 0.0
+            })
+            .map(|(&name, _)| name.to_string())
+            .collect();
+
+        // A processor facility can only ever be "set and left" on ONE recipe at a time — the
+        // continuous LP relaxation's assumption that it can be fractionally time-shared between
+        // several recipes isn't something a player can actually execute. When more distinct
+        // recipes want a facility than it has units, keep the `owned` most profitable ones
+        // (ranked by their own rate_per_second — every contributor needs exactly one dedicated
+        // unit regardless of its fraction, see `build_processor_usage`'s doc comment, so ranking
+        // by economic value directly answers "which recipe is worth the unit") and exclude the
+        // rest, re-solving so the LP finds their genuinely-usable alternative instead of
+        // recommending an unexecutable fractional split.
+        let trial_processor_usage = build_processor_usage(
+            items,
+            &trial_allocation,
+            &trial_eff_by_name,
+            facility_counts,
+            &trial_growers,
+        );
+        let mut contention_losers: Vec<String> = Vec::new();
+        for (&facility, contributors) in &trial_processor_usage {
+            let owned = facility_counts.get_count(facility) as usize;
+            if contributors.len() > owned {
+                let mut sorted = contributors.clone();
+                sorted.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
+                contention_losers
+                    .extend(sorted.iter().skip(owned).map(|(eff, _, _)| eff.item.name.clone()));
+            }
+        }
+
+        if stranded.is_empty() && contention_losers.is_empty() {
+            break trial;
+        }
+        excluded.extend(stranded);
+        excluded.extend(contention_losers);
+    };
+
+    // `candidates` has now settled (no stranded chains) — solve once more against it so
+    // `allocation`/`eff_by_name`/`grower_assignment` all borrow from a value that lives for the
+    // rest of the function, instead of threading the loop's trial values out through the borrow
+    // checker. Cheap: this problem size solves in well under a millisecond.
+    let allocation = solve_facility_allocation(&candidates, facility_counts);
+    let eff_by_name: HashMap<&str, &ProductionEfficiency> =
+        candidates.iter().map(|e| (e.item.name.as_str(), e)).collect();
+    let grower_assignment = build_grower_assignment(items, &allocation, &eff_by_name, facility_counts);
+    let is_grower = |name: &str| is_grower_facility(items, name);
+    let final_rate = |name: &str, continuous_rate: f64| -> f64 {
+        final_rate_for(items, eff_by_name[name], continuous_rate, &grower_assignment)
+    };
+
+    // One income stream per item the LP actually chose to produce.
+    let mut income_streams: Vec<PlanProduct> = Vec::new();
+    for (&name, &continuous_rate) in &allocation {
+        let rate = final_rate(name, continuous_rate);
+        if rate <= 0.0 {
+            continue; // fully squeezed out by grower rounding — no income from this item after all
+        }
+        let eff = eff_by_name[name];
+        let net_profit_per_batch = eff.item.sell_value * eff.item.yield_amount as f64 - eff.raw_cost;
+        income_streams.push(PlanProduct {
+            item_name: eff.item.name.clone(),
+            facility: eff.item.facility.clone(),
+            sell_value: eff.item.sell_value,
+            rate_per_second: net_profit_per_batch * rate,
+            units_per_second: rate * eff.item.yield_amount as f64,
+            lead_time: item_lead_time(&eff.item.name, &item_map, 0),
+            total_units: 0.0,
+            total_value: 0.0,
+        });
+    }
+
+    // Facility -> every item using it, its fraction of capacity, and its rate_per_second —
+    // replaces the old `claimed_by`/`facility_leftover`/`facility_feeding_item` trio with one
+    // structure that naturally supports any number of contributors per facility. Only
+    // meaningfully used for PROCESSOR facilities below — grower facilities are reported straight
+    // from `grower_assignment` instead. By this point the exclusion loop above already guarantees
+    // no processor facility has more contributors than owned units (see `build_processor_usage`'s
+    // doc comment), so `coin_items` below never needs to fall back to describing an unexecutable
+    // fractional time-share.
+    let facility_usage =
+        build_processor_usage(items, &allocation, &eff_by_name, facility_counts, &grower_assignment);
+
+    let rate_per_second = income_streams.iter().map(|p| p.rate_per_second).sum();
+
+    // Every distinct facility the user owns (count > 0), so the result can report on ALL owned
+    // facilities — including ones with nothing profitable to produce right now, not just the
+    // productive ones.
+    let mut facility_names: Vec<&str> = items
+        .iter()
+        .map(|i| i.facility.as_str())
+        .collect::<HashSet<&str>>()
+        .into_iter()
+        .filter(|name| facility_counts.get_count(name) > 0)
+        .collect();
+    facility_names.sort_unstable();
+
+    // Wood Blocks/Mineral Sand produced as a side effect — purely informational (see doc comment
+    // on `ProductionPlan::byproduct_rates`). A byproduct only ever comes from a raw item being
+    // GROWN (every processed item's `byproduct` is always `None` — see the data loaders), so this
+    // only ever applies to grower facilities, credited from `grower_assignment`'s exact plot
+    // counts rather than a fractional rate: a plot assigned to grow something produces its full
+    // byproduct yield regardless of whether the downstream recipe it feeds ends up using all of
+    // what it grows (the residual-imprecision case noted in `final_rate`'s doc comment) — the
+    // byproduct comes from growing, not from what happens to the harvest afterward. Kept as a rate
+    // + lead time here (not yet multiplied by any duration, since no goal is known at this point)
+    // — `time_to_reach_goal` turns these into totals once a plan's duration is known.
+    let mut byproduct_rates: Vec<(String, f64, f64)> = Vec::new();
+    let mut credit_byproduct = |item: &ProductionItem, fraction: f64| {
+        let Some((ref resource, amount)) = item.byproduct else {
+            return;
+        };
+        let facility_count = facility_counts.get_count(&item.facility) as f64;
+        let rate = fraction * amount as f64 * facility_count / item.production_time;
+        if rate <= 0.0 {
+            return;
+        }
+        let lead = item_lead_time(&item.name, &item_map, 0);
+        byproduct_rates.push((resource.clone(), rate, lead));
+    };
+    for ((facility, chain_name), &count) in &grower_assignment {
+        if count == 0 {
+            continue;
+        }
+        let Some(&eff) = eff_by_name.get(chain_name.as_str()) else {
+            continue;
+        };
+        // A grower facility hosts exactly one raw item per chain (it only ever grows one crop),
+        // so the first (only) hosted item there is the one actually being grown.
+        let hosted_raw_item = eff
+            .facility_demand
+            .iter()
+            .find(|(f, _, _)| f == facility)
+            .and_then(|(_, _, hosted)| hosted.first());
+        if let Some(raw_name) = hosted_raw_item {
+            if let Some(&raw_item) = item_map.get(raw_name.as_str()) {
+                let fraction = count as f64 / facility_counts.get_count(facility) as f64;
+                credit_byproduct(raw_item, fraction);
+            }
+        }
+    }
+
+    let coin_items: Vec<PlanStep> = facility_names
+        .iter()
+        .flat_map(|&name| -> Vec<PlanStep> {
+            if is_grower(name) {
+                // Authoritative: `grower_assignment` was fixed BEFORE any rate capping, as the
+                // whole-unit plot assignment everything else was derived from — not re-derived
+                // here from a fractional view, so it stays exactly consistent with Total Time and
+                // the Product Breakdown even in the rare case (see `final_rate`'s doc comment)
+                // where a chain can't fully use every plot assigned to it due to a bottleneck at
+                // one of its OTHER grower facilities.
+                let total_owned = facility_counts.get_count(name);
+                let mut assigned: Vec<(&str, &ProductionEfficiency, u32)> = grower_assignment
+                    .iter()
+                    .filter(|((facility, _), &count)| facility.as_str() == name && count > 0)
+                    .filter_map(|((_, chain_name), &count)| {
+                        eff_by_name.get(chain_name.as_str()).map(|&eff| (chain_name.as_str(), eff, count))
+                    })
+                    .collect();
+                assigned.sort_by(|a, b| b.2.cmp(&a.2));
+
+                if assigned.is_empty() {
+                    return vec![PlanStep {
+                        item_name: None,
+                        facility: name.to_string(),
+                        facility_count: total_owned,
+                        status: PlanStepStatus::NothingAvailable,
+                        reason: "No profitable item currently available".to_string(),
+                    }];
+                }
+
+                // What's actually grown here for `eff`'s chain (`facility_demand`'s hosted item —
+                // a grower only ever grows one crop, so there's exactly one), and how it's used.
+                let describe = |eff: &ProductionEfficiency| -> (String, String) {
+                    let hosted = eff
+                        .facility_demand
+                        .iter()
+                        .find(|(f, _, _)| f == name)
+                        .and_then(|(_, _, items)| items.first().cloned())
+                        .unwrap_or_default();
+                    let sentence = if eff.item.facility == name {
+                        "Sells directly".to_string()
+                    } else {
+                        format!("Used for {}", eff.item.name)
+                    };
+                    (hosted, sentence)
+                };
+
+                let idle = total_owned.saturating_sub(assigned.iter().map(|(_, _, c)| c).sum());
+                let mut steps: Vec<PlanStep> = assigned
+                    .iter()
+                    .map(|(_, eff, count)| {
+                        let (label, reason) = describe(eff);
+                        PlanStep {
+                            item_name: Some(label),
+                            facility: name.to_string(),
+                            facility_count: *count,
+                            status: PlanStepStatus::Producing,
+                            reason,
+                        }
+                    })
+                    .collect();
+                if idle > 0 {
+                    steps.push(PlanStep {
+                        item_name: None,
+                        facility: name.to_string(),
+                        facility_count: idle,
+                        status: PlanStepStatus::Idle,
+                        reason: "No further profitable use found".to_string(),
+                    });
+                }
+                return steps;
+            }
+
+            // Processor facility: a physically dedicated unit's achievable rate can only be >=
+            // its share of a jointly-run one (its ceiling is a whole unit's worth of throughput,
+            // not a fraction of it), so whole-unit dedication never changes any rate/total
+            // computed above — it's a pure relabeling of which unit does what. The exclusion loop
+            // in `find_production_plan` already guarantees no processor facility has more
+            // contributors than owned units by this point (a processor can only ever be "set and
+            // left" on one recipe — see `build_processor_usage`'s doc comment), so this always
+            // resolves to whole-unit dedication, never a time-share percentage.
+            let mut contributors: Vec<(&ProductionEfficiency, f64, f64)> =
+                facility_usage.get(name).cloned().unwrap_or_default();
+            contributors.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+
+            if contributors.is_empty() {
+                return vec![PlanStep {
+                    item_name: None,
+                    facility: name.to_string(),
+                    facility_count: facility_counts.get_count(name),
+                    status: PlanStepStatus::NothingAvailable,
+                    reason: "No profitable item currently available".to_string(),
+                }];
+            }
+
+            // What item `eff` produces here. For `eff`'s own root facility this is just its own
+            // item; for any other facility touched by `eff`'s chain, look up which specific
+            // item(s) it hosts there (`facility_demand`'s third element) rather than the whole
+            // chain's name.
+            let describe = |eff: &ProductionEfficiency| -> (String, String) {
+                if eff.item.facility == name {
+                    (eff.item.name.clone(), "Sells directly".to_string())
+                } else {
+                    let hosted = eff
+                        .facility_demand
+                        .iter()
+                        .find(|(f, _, _)| f == name)
+                        .map(|(_, _, items)| items.join("+"))
+                        .unwrap_or_default();
+                    (hosted, format!("Used for {}", eff.item.name))
+                }
+            };
+
+            let owned = facility_counts.get_count(name);
+
+            if contributors.len() == 1 {
+                let (eff, _, _) = contributors[0];
+                let (label, reason) = describe(eff);
+                return vec![PlanStep {
+                    item_name: Some(label),
+                    facility: name.to_string(),
+                    facility_count: owned,
+                    status: PlanStepStatus::Producing,
+                    reason,
+                }];
+            }
+
+            // A dedicated unit only ever needs to cover a contributor's own fractional demand, so
+            // rounding UP to the next whole unit (never down) guarantees it's never under-supplied
+            // relative to the shared-time version. Every contributor's rounded-up need is
+            // guaranteed to fit within what's owned by this point (the exclusion loop in
+            // `find_production_plan` already resolved any contention before this code runs), so
+            // whole-unit dedication always applies; the leftover (if any) is genuinely idle
+            // capacity, same concept as a grower's idle plots.
+            let needed: Vec<u32> = contributors.iter().map(|(_, f, _)| f.ceil() as u32).collect();
+            let total_needed: u32 = needed.iter().sum();
+            debug_assert!(
+                total_needed <= owned,
+                "processor contention should have been resolved by find_production_plan's \
+                 exclusion loop before coin_items is built"
+            );
+
+            let mut steps: Vec<PlanStep> = contributors
+                .iter()
+                .zip(&needed)
+                .map(|((eff, _, _), &count)| {
+                    let (label, reason) = describe(eff);
+                    PlanStep {
+                        item_name: Some(label),
+                        facility: name.to_string(),
+                        facility_count: count,
+                        status: PlanStepStatus::Producing,
+                        reason,
+                    }
+                })
+                .collect();
+            let idle = owned.saturating_sub(total_needed);
+            if idle > 0 {
+                steps.push(PlanStep {
+                    item_name: None,
+                    facility: name.to_string(),
+                    facility_count: idle,
+                    status: PlanStepStatus::Idle,
+                    reason: "No further profitable use found".to_string(),
+                });
+            }
+            steps
+        })
+        .collect();
+
+    Some(ProductionPlan {
+        currency: currency.to_string(),
+        rate_per_second,
+        income_streams,
+        coin_items,
+        byproduct_rates,
+    })
+}
+
+/// Turns a [`ProductionPlan`] plus a goal amount into a concrete time-to-target, using the plan's
+/// already-computed rates — no facility-allocation re-solve, so this is cheap enough to call on
+/// every keystroke of a goal-amount input. Returns `None` only in the pathological case where the
+/// binary search exceeds ~317 years without reaching `target` (treated as genuinely infeasible;
+/// shouldn't happen for a `plan` returned by `find_production_plan`, whose `income_streams` always
+/// has at least one item with positive `rate_per_second` when `Some` is returned).
+pub fn time_to_reach_goal(plan: &ProductionPlan, target: f64, current: f64) -> Option<GoalResult> {
+    let delta = (target - current).max(0.0);
+
+    if delta <= 0.0 {
+        return Some(GoalResult {
+            total_time: 0.0,
+            amount_produced: 0.0,
+            products: vec![],
+            byproducts: vec![],
+        });
+    }
+
+    // Amount accumulated by time `t`: each income stream contributes nothing until its own lead
+    // time has passed, then its steady-state rate after that. Monotonically non-decreasing in
+    // `t`, so the minimal `t` reaching `delta` can be found by binary search.
+    let amount_at = |t: f64| -> f64 {
+        plan.income_streams
+            .iter()
+            .map(|p| p.rate_per_second * (t - p.lead_time).max(0.0))
+            .sum()
+    };
+
+    let mut hi = 3600.0_f64;
+    while amount_at(hi) < delta {
+        hi *= 2.0;
+        if hi > 1e10 {
+            // ~317 years — treat as genuinely infeasible.
+            return None;
+        }
+    }
+    let mut lo = 0.0_f64;
+    for _ in 0..100 {
+        let mid = (lo + hi) / 2.0;
+        if amount_at(mid) >= delta {
+            hi = mid;
+        } else {
+            lo = mid;
+        }
+    }
+    let total_time = hi;
+    let amount_produced = amount_at(total_time);
+
+    // Fill in each income stream's actual contribution over the plan's duration, and drop any
+    // that never got past their own lead time (they were claimed, but the target was reached
+    // before they produced anything) — reported per-facility in `plan.coin_items`, but not worth
+    // a row in this item-level breakdown. Sorted by total worth, most valuable first.
+    let mut products: Vec<PlanProduct> = plan
+        .income_streams
+        .iter()
+        .cloned()
+        .map(|mut p| {
+            let active_time = (total_time - p.lead_time).max(0.0);
+            p.total_value = p.rate_per_second * active_time;
+            p.total_units = p.units_per_second * active_time;
+            p
+        })
+        .filter(|p| p.total_value > 0.0)
+        .collect();
+    products.sort_by(|a, b| {
+        b.total_value
+            .partial_cmp(&a.total_value)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    let mut byproduct_totals: HashMap<&str, f64> = HashMap::new();
+    for (resource, rate, lead) in &plan.byproduct_rates {
+        let active = (total_time - lead).max(0.0);
+        *byproduct_totals.entry(resource.as_str()).or_insert(0.0) += rate * active;
+    }
+    let mut byproducts: Vec<(String, f64)> = byproduct_totals
+        .into_iter()
+        .filter(|(_, amount)| *amount > 0.0)
+        .map(|(resource, amount)| (resource.to_string(), amount))
+        .collect();
+    byproducts.sort_by(|a, b| a.0.cmp(&b.0));
+
+    Some(GoalResult {
+        total_time,
+        amount_produced,
+        products,
+        byproducts,
     })
 }
