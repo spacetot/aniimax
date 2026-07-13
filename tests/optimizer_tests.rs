@@ -343,6 +343,77 @@ fn test_find_coin_plan_processor_contention_dedicates_to_one_recipe_not_both() {
     );
 }
 
+// A processor facility with exactly ONE profitable contributor previously took a shortcut that
+// reported the full owned count as dedicated to it, skipping the whole-unit/idle computation the
+// multi-contributor path already did correctly. With 2 owned Crafting Tables and a single trickle
+// of pearl (from 1 Tidewhisper Sandcastle) needing well under one unit's worth of capacity, only 1
+// Crafting Table should show as producing pearl_necklace, with the other genuinely idle.
+#[test]
+fn test_find_coin_plan_solo_processor_contributor_reports_true_need_not_full_owned_count() {
+    let data_dir = Path::new("data");
+    if !data_dir.exists() {
+        return;
+    }
+    let items = load_all_data(data_dir).expect("Failed to load data");
+    let counts = FacilityCounts::from_pairs(&[
+        ("Farmland", 24, 4),
+        ("Woodland", 12, 3),
+        ("Mineral Pile", 6, 3),
+        ("Nimbus Bed", 1, 1),
+        ("Grass Blossom Mat", 1, 1),
+        ("Starfall Hammock", 1, 1),
+        ("Tidewhisper Sandcastle", 1, 1),
+        ("Carousel Mill", 2, 3),
+        ("Phonolfactory Table", 1, 2),
+        ("Bouncy Brew Keg", 1, 2),
+        ("Crafting Table", 2, 3),
+        ("Claw Game Cooker", 1, 2),
+        ("Joy Wheel Loom", 1, 2),
+        ("Jukebox Dryer", 2, 3),
+    ]);
+    let modules = ModuleLevels {
+        ecological_module: 3,
+        kitchen_module: 3,
+        mineral_detector: 3,
+        crafting_module: 3,
+    };
+    let plan = find_production_plan(&items, "coins", &counts, &modules).expect("plan should be feasible");
+
+    let crafting_table_steps: Vec<&PlanStep> = plan
+        .coin_items
+        .iter()
+        .filter(|s| s.facility == "Crafting Table")
+        .collect();
+    let producing: Vec<&&PlanStep> = crafting_table_steps
+        .iter()
+        .filter(|s| s.status == PlanStepStatus::Producing)
+        .collect();
+    let idle: Vec<&&PlanStep> = crafting_table_steps
+        .iter()
+        .filter(|s| s.status == PlanStepStatus::Idle)
+        .collect();
+
+    assert_eq!(
+        producing.len(),
+        1,
+        "expected exactly one Crafting Table recipe, got: {:?}",
+        crafting_table_steps
+    );
+    assert_eq!(
+        producing[0].facility_count, 1,
+        "a trickle of pearl from 1 Tidewhisper Sandcastle needs far less than 1 whole Crafting \
+         Table, so only 1 of the 2 owned units should be dedicated, got: {:?}",
+        crafting_table_steps
+    );
+    assert_eq!(
+        idle.len(),
+        1,
+        "the second Crafting Table unit should show as genuinely idle, got: {:?}",
+        crafting_table_steps
+    );
+    assert_eq!(idle[0].facility_count, 1);
+}
+
 #[test]
 fn test_find_coin_plan_infeasible_with_no_facilities() {
     let data_dir = Path::new("data");

@@ -2552,18 +2552,6 @@ pub fn find_production_plan(
 
             let owned = facility_counts.get_count(name);
 
-            if contributors.len() == 1 {
-                let (eff, _, _) = contributors[0];
-                let (label, reason) = describe(eff);
-                return vec![PlanStep {
-                    item_name: Some(label),
-                    facility: name.to_string(),
-                    facility_count: owned,
-                    status: PlanStepStatus::Producing,
-                    reason,
-                }];
-            }
-
             // A dedicated unit only ever needs to cover a contributor's own fractional demand, so
             // rounding UP to the next whole unit (never down) guarantees it's never under-supplied
             // relative to the shared-time version. Every contributor's rounded-up need is
