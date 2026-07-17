@@ -1654,4 +1654,3 @@ fn test_environment_coverage_choice_does_not_settle_for_a_worse_joint_split() {
         plan.rate_per_second
     );
 }
-

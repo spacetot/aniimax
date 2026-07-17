@@ -3018,49 +3018,52 @@ pub fn find_production_plan(
 
         // Only a chain that's (a) currently actually producing something (excluding a chain
         // that's already at zero can't possibly free up coverage anyone else can use) and (b)
-        // touches an environment-gated facility whose (facility_type, mode) pair is ALSO touched
-        // by some OTHER chain among ALL original candidates (no genuine alternative claimant, no
-        // possible improvement from excluding it) is worth the cost of a full trial re-solve.
-        // Sorted for determinism, same reason as every other exclusion pass in this function.
-        let mut environment_pairs: HashMap<&str, HashSet<(&str, &str)>> = HashMap::new();
+        // needs an environment mode that's ALSO needed by some OTHER chain among ALL original
+        // candidates (no genuine alternative claimant, no possible improvement from excluding it)
+        // is worth the cost of a full trial re-solve. Keyed by MODE alone, not `(facility_type,
+        // mode)`: every mode maps to exactly one physical building type (see
+        // `ENVIRONMENT_BUILDINGS`), so a Farmland chain and a Woodland chain both needing
+        // "Adequate" genuinely compete for the same Sunlamp's coverage even though they're
+        // different facility types; keying by the pair would treat them as separate, uncontested
+        // pools and miss exactly the trade-off this pass exists to catch. Sorted for determinism,
+        // same reason as every other exclusion pass in this function.
+        let mut environment_modes: HashMap<&str, HashSet<&str>> = HashMap::new();
         for eff in &effs {
             for (facility, item_name, _) in &eff.facility_demand {
-                let Some(&(facility_type, _)) =
-                    crate::coverage::ENVIRONMENT_GATED_FACILITIES.iter().find(|(f, _)| f == facility)
-                else {
+                if !crate::coverage::ENVIRONMENT_GATED_FACILITIES.iter().any(|(f, _)| f == facility) {
                     continue;
-                };
+                }
                 if let Some(env) = item_map.get(item_name.as_str()).and_then(|i| i.environment.as_deref()) {
-                    environment_pairs.entry(eff.item.name.as_str()).or_default().insert((facility_type, env));
+                    environment_modes.entry(eff.item.name.as_str()).or_default().insert(env);
                 }
             }
         }
-        let contested_pairs: HashSet<(&str, &str)> = {
-            let mut counts: HashMap<(&str, &str), HashSet<&str>> = HashMap::new();
-            for (&chain, pairs) in &environment_pairs {
-                for &pair in pairs {
-                    counts.entry(pair).or_default().insert(chain);
+        let contested_modes: HashSet<&str> = {
+            let mut counts: HashMap<&str, HashSet<&str>> = HashMap::new();
+            for (&chain, modes) in &environment_modes {
+                for &mode in modes {
+                    counts.entry(mode).or_default().insert(chain);
                 }
             }
-            counts.into_iter().filter(|(_, chains)| chains.len() > 1).map(|(pair, _)| pair).collect()
+            counts.into_iter().filter(|(_, chains)| chains.len() > 1).map(|(mode, _)| mode).collect()
         };
-        // One representative per contested pair (the first still-producing, not-yet-excluded
+        // One representative per contested mode (the first still-producing, not-yet-excluded
         // candidate touching it), not every chain touching one; a full trial re-solve here reruns
         // the entire coverage-packing pipeline (not cheap, unlike the LP-only marginal-exclusion
         // pass above), so this bounds the trial count by how many distinct SCARCE coverage pools
         // are actually contested rather than by how many chains happen to touch one, which would
         // retry every touching chain even when a scenario has no actual coverage-choice
         // improvement to find.
-        let mut trial_candidates: Vec<&str> = contested_pairs
+        let mut trial_candidates: Vec<&str> = contested_modes
             .iter()
-            .filter_map(|&pair| {
+            .filter_map(|&mode| {
                 candidates
                     .iter()
                     .find(|eff| {
                         !environment_excluded.contains(&eff.item.name)
-                            && environment_pairs
+                            && environment_modes
                                 .get(eff.item.name.as_str())
-                                .is_some_and(|pairs| pairs.contains(&pair))
+                                .is_some_and(|modes| modes.contains(mode))
                             && {
                                 let rate = allocation.get(eff.item.name.as_str()).copied().unwrap_or(0.0);
                                 final_rate_for(items, &item_map, eff, rate, &grower_assignment, &environment_assignment)
