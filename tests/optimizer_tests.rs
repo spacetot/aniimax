@@ -1471,11 +1471,25 @@ fn test_prioritize_byproducts_forces_max_wood_blocks_rate_at_a_real_coin_cost() 
 // wanting "Adequate", genuinely more profitable) would win most of the single owned Sunlamp's
 // coverage, leaving pine far less than the isolated sub-solve assumed -- making the floor
 // unreachable and the whole plan spuriously report as infeasible even though a real, profitable
-// plan exists (confirmed by `prioritize_byproducts: false` below). Only Sunlamp is owned (no Heat
-// Furnace/Cooling Unit), so "Adequate" is the only mode with any coverage at all, forcing Farmland
-// and Woodland to genuinely compete for the exact same scarce building.
+// plan exists. This scenario's `FacilityCounts` only explicitly sets Sunlamp among the
+// environment buildings; Heat Furnace and Cooling Unit are left unset, which `FacilityCounts`
+// defaults to owning 1 of (see `FacilityCounts::get_count`'s doc comment) -- so Farmland and
+// Woodland still end up genuinely competing for that single implicit Cooling Unit's shared "Cool"
+// coverage too.
+//
+// This scenario's Wood Blocks floor genuinely can't be reached for free: Woodland's walnut
+// (Cool-gated) yields roughly double the Wood Blocks of its ungated sibling quick_lemon, but needs
+// that same single Cooling Unit's shared coverage slot that Starfall Hammock/Tidewhisper
+// Sandcastle would otherwise use for a more profitable star/pearl_necklace pairing. Prioritizing
+// correctly trades that pairing away for walnut's larger byproduct yield -- a real, expected coin
+// cost, not a bug (confirmed by hand: unprioritized keeps Starfall/Tidewhisper and grows
+// quick_lemon instead of walnut; prioritized swaps to walnut and drops Starfall/Tidewhisper's Cool
+// coverage entirely). The only guarantees `prioritize_byproducts` actually promises, and the only
+// ones this test checks, are: it never turns a feasible plan infeasible, it never leaves Wood
+// Blocks output worse than not prioritizing at all, and it never somehow produces a HIGHER coin
+// rate than the plain profit-maximizing solve (which would mean the floor was needlessly binding).
 #[test]
-fn test_prioritize_byproducts_does_not_force_an_unreachable_floor_when_coverage_is_contested() {
+fn test_prioritize_byproducts_remains_feasible_and_does_not_reduce_byproduct_output_when_coverage_is_contested() {
     let data_dir = Path::new("data");
     if !data_dir.exists() {
         return;
@@ -1503,6 +1517,12 @@ fn test_prioritize_byproducts_does_not_force_an_unreachable_floor_when_coverage_
 
     let unprioritized =
         find_production_plan(&items, "coins", &counts, &modules, false).expect("plan should be feasible");
+    let unprioritized_wood_blocks: f64 = unprioritized
+        .byproduct_rates
+        .iter()
+        .filter(|(r, _, _)| r == "Wood Blocks")
+        .map(|(_, rate, _)| rate)
+        .sum();
 
     let prioritized = find_production_plan(&items, "coins", &counts, &modules, true);
     assert!(
@@ -1511,10 +1531,27 @@ fn test_prioritize_byproducts_does_not_force_an_unreachable_floor_when_coverage_
          failure; the floor must reflect what the byproduct-yielding item can actually get once \
          currency-priced candidates have their share of the same scarce coverage"
     );
+    let prioritized = prioritized.unwrap();
+    let prioritized_wood_blocks: f64 = prioritized
+        .byproduct_rates
+        .iter()
+        .filter(|(r, _, _)| r == "Wood Blocks")
+        .map(|(_, rate, _)| rate)
+        .sum();
+
     assert!(
-        (prioritized.unwrap().rate_per_second - unprioritized.rate_per_second).abs() < 1e-6,
-        "with nothing else to trade away for byproduct output here, prioritizing should reach the \
-         same rate as not prioritizing"
+        prioritized_wood_blocks > unprioritized_wood_blocks + 1e-9,
+        "prioritizing should genuinely increase Wood Blocks output here (walnut yields roughly \
+         double quick_lemon's Wood Blocks per plot); got unprioritized={unprioritized_wood_blocks}, \
+         prioritized={prioritized_wood_blocks}"
+    );
+    assert!(
+        prioritized.rate_per_second <= unprioritized.rate_per_second + 1e-9,
+        "prioritizing can cost coin profit trading it for more byproduct output, but should never \
+         exceed the unprioritized (plain profit-maximizing) rate; got prioritized={} \
+         unprioritized={}",
+        prioritized.rate_per_second,
+        unprioritized.rate_per_second
     );
 }
 
