@@ -8,7 +8,7 @@ use wasm_bindgen::prelude::*;
 use crate::models::{FacilityCounts, ModuleLevels, ProductionEfficiency, ProductionItem};
 use crate::optimizer::{
     calculate_efficiencies, calculate_energy_efficiencies, find_best_production_path,
-    find_parallel_production_path, find_production_plan, find_self_sufficient_path,
+    find_parallel_production_path, find_production_plan_with_progress, find_self_sufficient_path,
     time_to_reach_goal,
 };
 
@@ -1159,8 +1159,16 @@ impl JsProductionPlan {
 ///
 /// Takes a JSON string input ([`JsPlanInput`]) and returns a JSON string result
 /// ([`JsProductionPlan`]). See [`crate::optimizer::find_production_plan`] for the algorithm.
+///
+/// `on_progress`, if given, is called with the solver's real, running trial-solve count after
+/// every trial solve throughout the whole pipeline (see
+/// [`crate::optimizer::find_production_plan_with_progress`]); this is genuine solve progress, not
+/// a value simulated independently of the actual computation, so the caller (`web/worker.js`) can
+/// forward it to the main thread for a real progress bar. Since this function itself already runs
+/// off the main thread (called from a Web Worker; see `web/worker.js`), calling back into JS here
+/// doesn't block anything else from rendering.
 #[wasm_bindgen]
-pub fn find_plan(input_json: &str) -> String {
+pub fn find_plan(input_json: &str, on_progress: Option<js_sys::Function>) -> String {
     let input: JsPlanInput = match serde_json::from_str(input_json) {
         Ok(i) => i,
         Err(e) => {
@@ -1182,12 +1190,23 @@ pub fn find_plan(input_json: &str) -> String {
 
     let items = get_embedded_items();
 
-    match find_production_plan(
+    // `js_sys::Function::call1` takes `&JsValue` for both the `this` receiver and the argument;
+    // errors (e.g. the JS callback itself throwing) are deliberately swallowed with `let _ =`,
+    // since a broken progress callback shouldn't be able to abort the actual calculation.
+    let report: Option<Box<dyn Fn(u32)>> = on_progress.map(|f| {
+        Box::new(move |count: u32| {
+            let _ = f.call1(&JsValue::NULL, &JsValue::from(count));
+        }) as Box<dyn Fn(u32)>
+    });
+    let report_ref: Option<&dyn Fn(u32)> = report.as_deref();
+
+    match find_production_plan_with_progress(
         &items,
         &input.currency,
         &facility_counts,
         &module_levels,
         input.prioritize_byproducts,
+        report_ref,
     ) {
         Some(plan) => {
             let result = JsProductionPlan {

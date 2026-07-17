@@ -2649,6 +2649,20 @@ fn max_achievable_byproduct_rate(
 /// SAME "try excluding, keep it only if the real total improves" pattern already used inside this
 /// pipeline for stranded/contended chains, just one level up (coverage-CHOICE rather than
 /// facility-plot rounding).
+/// Forwards `trial_count`'s new value to `on_progress`, if one was supplied; called after every
+/// trial solve throughout `find_production_plan_with_progress`'s pipeline, so a caller (currently
+/// only `wasm.rs`'s `find_plan`, for driving a real progress bar) can observe genuine solve
+/// progress as it happens rather than a value simulated independently of the actual computation.
+/// `&dyn Fn` (not `FnMut`) specifically so this reference can be freely reused across the many
+/// sequential call sites below without fighting the borrow checker over exclusive access; the
+/// callback itself doesn't need to mutate anything on the Rust side, only forward the count to
+/// whatever JS callback wraps it.
+fn report_progress(trial_count: u32, on_progress: Option<&dyn Fn(u32)>) {
+    if let Some(cb) = on_progress {
+        cb(trial_count);
+    }
+}
+
 fn solve_environment_and_facility_allocation(
     items: &[ProductionItem],
     item_map: &HashMap<&str, &ProductionItem>,
@@ -2656,6 +2670,7 @@ fn solve_environment_and_facility_allocation(
     facility_counts: &FacilityCounts,
     byproduct_floors: &[(&str, f64)],
     trial_count: &mut u32,
+    on_progress: Option<&dyn Fn(u32)>,
 ) -> Option<(
     HashMap<(&'static str, &'static str), u32>,
     HashMap<&'static str, Vec<(crate::coverage::Placement, u32)>>,
@@ -2720,6 +2735,7 @@ fn solve_environment_and_facility_allocation(
             let trial_allocation =
                 solve_facility_allocation(item_map, &trial, facility_counts, &coverage_bounds, byproduct_floors);
             *trial_count += 1;
+            report_progress(*trial_count, on_progress);
             if trial_allocation.is_empty() {
                 // Nothing profitable available anywhere; genuinely infeasible.
                 return None;
@@ -2945,6 +2961,7 @@ fn try_environment_exclusion_set(
     facility_counts: &FacilityCounts,
     byproduct_floors: &[(&str, f64)],
     trial_count: &mut u32,
+    on_progress: Option<&dyn Fn(u32)>,
     excluded: &HashSet<String>,
     to_exclude: &[&str],
 ) -> Option<(
@@ -2969,6 +2986,7 @@ fn try_environment_exclusion_set(
             facility_counts,
             byproduct_floors,
             trial_count,
+            on_progress,
         )?;
     let test_allocation = solve_facility_allocation(
         item_map,
@@ -2978,6 +2996,7 @@ fn try_environment_exclusion_set(
         byproduct_floors,
     );
     *trial_count += 1;
+    report_progress(*trial_count, on_progress);
     let test_eff_by_name: HashMap<&str, &ProductionEfficiency> =
         test_candidates.iter().map(|e| (e.item.name.as_str(), e)).collect();
     let test_environment =
@@ -3017,6 +3036,24 @@ pub fn find_production_plan(
     module_levels: &ModuleLevels,
     prioritize_byproducts: bool,
 ) -> Option<ProductionPlan> {
+    find_production_plan_with_progress(items, currency, facility_counts, module_levels, prioritize_byproducts, None)
+}
+
+/// Same as [`find_production_plan`], with an optional `on_progress` callback invoked (via
+/// `report_progress`) after every trial solve throughout the whole pipeline; factored out as its
+/// own function, rather than adding the parameter directly to `find_production_plan`, so every
+/// existing call site (the large majority: every test, plus any future non-wasm caller) is
+/// unaffected and keeps calling the simple, progress-less version. Currently only `wasm.rs`'s
+/// `find_plan` calls this directly, to drive a real progress bar from genuine solve progress
+/// instead of a value simulated independently of the actual computation.
+pub fn find_production_plan_with_progress(
+    items: &[ProductionItem],
+    currency: &str,
+    facility_counts: &FacilityCounts,
+    module_levels: &ModuleLevels,
+    prioritize_byproducts: bool,
+    on_progress: Option<&dyn Fn(u32)>,
+) -> Option<ProductionPlan> {
     let item_map: HashMap<&str, &ProductionItem> =
         items.iter().map(|i| (i.name.as_str(), i)).collect();
 
@@ -3045,6 +3082,7 @@ pub fn find_production_plan(
             facility_counts,
             &byproduct_floors,
             &mut trial_count,
+            on_progress,
         )
     else {
         return None;
@@ -3101,6 +3139,7 @@ pub fn find_production_plan(
         let allocation =
             solve_facility_allocation(&item_map, &candidates, facility_counts, &coverage_bounds, &byproduct_floors);
         trial_count += 1;
+        report_progress(trial_count, on_progress);
         let eff_by_name: HashMap<&str, &ProductionEfficiency> =
             candidates.iter().map(|e| (e.item.name.as_str(), e)).collect();
         let environment_assignment = build_environment_assignment(&item_map, &allocation, &eff_by_name, &placements);
@@ -3188,6 +3227,7 @@ pub fn find_production_plan(
                     facility_counts,
                     &byproduct_floors,
                     &mut trial_count,
+                    on_progress,
                     &environment_excluded,
                     &[candidate_name.as_str()],
                 )
@@ -3238,6 +3278,7 @@ pub fn find_production_plan(
                         facility_counts,
                         &byproduct_floors,
                         &mut trial_count,
+                        on_progress,
                         &environment_excluded,
                         &pair,
                     ) else {
@@ -3271,6 +3312,7 @@ pub fn find_production_plan(
     let allocation =
         solve_facility_allocation(&item_map, &candidates, facility_counts, &coverage_bounds, &byproduct_floors);
     trial_count += 1;
+    report_progress(trial_count, on_progress);
     let eff_by_name: HashMap<&str, &ProductionEfficiency> =
         candidates.iter().map(|e| (e.item.name.as_str(), e)).collect();
     let environment_assignment = build_environment_assignment(&item_map, &allocation, &eff_by_name, &placements);
