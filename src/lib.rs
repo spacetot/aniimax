@@ -66,6 +66,7 @@
 //! 2. **Energy Optimization**: Finds the most energy-efficient production path,
 //!    useful when energy is a limited resource.
 
+pub mod coverage;
 pub mod data;
 pub mod display;
 pub mod models;

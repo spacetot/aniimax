@@ -1,4 +1,4 @@
-//! Tests for data models and structures.
+﻿//! Tests for data models and structures.
 
 use aniimax::models::{FacilityCounts, ProductionItem};
 
@@ -70,9 +70,9 @@ fn test_production_item_creation() {
         energy: Some(809.0),
         facility_level: 1,
         module_requirement: None,
-        requires_fertilizer: false,
         workload: None,
         byproduct: None,
+        environment: None,
     };
 
     assert_eq!(item.name, "wheat");
@@ -97,9 +97,9 @@ fn test_processed_item_creation() {
         energy: Some(3000.0),
         facility_level: 1,
         module_requirement: None,
-        requires_fertilizer: false,
         workload: None,
         byproduct: None,
+        environment: None,
     };
 
     assert_eq!(item.name, "wheatmeal");

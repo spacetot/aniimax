@@ -29,9 +29,9 @@ use std::collections::HashSet;
 ///     energy: Some(809.0),
 ///     facility_level: 1,
 ///     module_requirement: None,
-///     requires_fertilizer: false,
 ///     workload: None,
 ///     byproduct: None,
+///     environment: None,
 /// };
 /// ```
 #[derive(Debug, Clone)]
@@ -60,8 +60,6 @@ pub struct ProductionItem {
     pub facility_level: u32,
     /// Module requirement: (module_name, required_level) - None if no module needed
     pub module_requirement: Option<(String, u32)>,
-    /// Whether this item requires fertilizer to produce
-    pub requires_fertilizer: bool,
     /// Workload stat (new-beta Aniimo-dispatch facilities only). Informational — `production_time`
     /// already reflects the derived time at 100% efficiency; see [`WORKLOAD_RATE_ESTIMATE`].
     pub workload: Option<f64>,
@@ -70,6 +68,14 @@ pub struct ProductionItem {
     /// progression resources (Homeland/RV upgrades), not currency, so they are not folded
     /// into the profit optimizer — informational only.
     pub byproduct: Option<(String, u32)>,
+    /// Growing environment this item needs to be planted (e.g. "Cool", "Warm", "Freeze",
+    /// "Scorching", "Adequate"), or `None` if it has no environment requirement. Only ever
+    /// set on grower items (Farmland/Woodland/Aniimo-material facilities) — a processed item
+    /// is made indoors and never needs one. Capacity for environment-gated items is bounded by
+    /// how many plots the player's environment buildings (Heat Furnace/Cooling Unit/Sunlamp)
+    /// actually cover, not just by how many plots they own — see
+    /// `crate::optimizer::solve_facility_allocation`.
+    pub environment: Option<String>,
 }
 
 /// Calibration constant for converting `workload` (any workload-driven, Aniimo-dispatch
@@ -200,6 +206,46 @@ pub struct PlanStep {
     pub status: PlanStepStatus,
     /// Human-readable explanation of `status`, for display
     pub reason: String,
+    /// Whether this facility grows/mines something (Farmland, Woodland, Mineral Pile, ...) as
+    /// opposed to processing ingredients (Carousel Mill, ...) — used for whole-unit plot rounding
+    /// (a grower dedicates a whole plot to one crop for its whole cycle; a processor can be
+    /// re-dedicated). NOT the same thing as "needs a seed": only Farmland and Woodland are
+    /// actually planted — see `SeedRequirement`'s doc comment.
+    pub is_grower: bool,
+    /// Seconds for one full production cycle of `item_name` at this facility. `None` for
+    /// Idle/NothingAvailable/NotNeeded rows, since nothing is cycling there.
+    pub cycle_time: Option<f64>,
+    /// The growing environment this row's item needs ("Cool"/"Warm"/"Freeze"/"Scorching"/
+    /// "Adequate"), if any — lets the frontend group Farmland/Woodland rows by which environment
+    /// they rely on (see `ProductionItem::environment`) instead of leaving that connection to a
+    /// separate table the player has to cross-reference by hand. `None` for anything that isn't a
+    /// Producing row for an environment-gated crop (processor rows, idle/unavailable rows, and
+    /// ungated crops all leave this `None`).
+    pub environment: Option<String>,
+}
+
+/// How many times a Farmland/Woodland plot needs to be (re-)planted with a fresh seed over the
+/// whole goal duration — one seed per planting, matching the crop's existing `cost` field. Only
+/// Farmland and Woodland are actually planted: Mineral Pile is mined, and the Aniimo-dispatch
+/// facilities (Nimbus Bed, Grass Blossom Mat, Starfall Hammock, Tidewhisper Sandcastle, Dewy
+/// House) are harvested via family dispatch — neither needs a seed, so they never appear here,
+/// and nor do processors (they don't plant anything either). See
+/// `crate::optimizer::time_to_reach_goal`.
+#[derive(Debug, Clone)]
+pub struct SeedRequirement {
+    /// Facility being planted (e.g. "Farmland")
+    pub facility: String,
+    /// Crop being planted (e.g. "rose")
+    pub item_name: String,
+    /// Number of this facility's plots dedicated to this crop
+    pub facility_count: u32,
+    /// Plantings needed per plot over the goal duration: `ceil(total_time / cycle_time)` — the
+    /// ceiling matters here (unlike the floored `total_units` elsewhere) because a seed must
+    /// already be planted to make any progress on a still-in-progress final cycle, even though
+    /// that cycle's output isn't counted as a completed unit yet.
+    pub seeds_per_plot: u64,
+    /// `facility_count * seeds_per_plot` — the number to actually go plant.
+    pub total_seeds: u64,
 }
 
 /// A single income stream within a [`ProductionPlan`] — either a fully-selected item, or the
@@ -237,17 +283,63 @@ pub struct PlanProduct {
     pub total_value: f64,
 }
 
-/// The provably-optimal simultaneous use of every owned facility for one currency ("coins" or
-/// "bud_tickets") — target-independent: this is "what's the best I can do," computed before any
-/// goal amount is known. See `crate::optimizer::find_production_plan` for the algorithm, and
+/// One facility's exact placement around a single environment building, in the same coordinate
+/// space `crate::coverage`'s packing solver reasons in (building center = origin) — lets the
+/// frontend render the solver's actual chosen layout (a simple diagram) instead of an invented
+/// illustration.
+#[derive(Debug, Clone)]
+pub struct FacilityPlacement {
+    pub facility: String,
+    pub x: f64,
+    pub y: f64,
+    /// Footprint side length (all environment-gated facilities are square) — lets the frontend
+    /// draw the right size rectangle.
+    pub size: f64,
+}
+
+/// How a single environment building (Heat Furnace / Cooling Unit / Sunlamp) is configured —
+/// which temperature mode it runs, and which facilities its owned units host. Unlike [`PlanStep`],
+/// a building doesn't produce a sellable item; it produces *coverage* that other grower plots
+/// need to be plantable at all (see `ProductionItem::environment` and
+/// `crate::optimizer::solve_facility_allocation`). Coverage is computed via exact 2D geometric
+/// packing (`crate::coverage`), not picked from a small set of presets — the game's real mechanic
+/// is continuous area coverage, confirmed directly against the game (including two screenshots
+/// pinning down the exact overlap rule).
+#[derive(Debug, Clone)]
+pub struct EnvironmentAssignment {
+    /// "Heat Furnace" / "Cooling Unit" / "Sunlamp"
+    pub building: String,
+    /// Temperature mode this group of units is running: "Warm"/"Scorching" (Heat Furnace),
+    /// "Cool"/"Freeze" (Cooling Unit), or "Adequate" (Sunlamp, its only mode)
+    pub mode: String,
+    /// Number of this building's units configured this way
+    pub units: u32,
+    /// Total plots of each facility type this group of units covers, e.g.
+    /// `[("Farmland", 24), ("Woodland", 12)]`.
+    pub covered: Vec<(String, u32)>,
+    /// One entry per individual building instance (length == `units`), each holding that
+    /// specific building's exact facility layout — for the frontend's per-building table and
+    /// visual diagram.
+    pub layouts: Vec<Vec<FacilityPlacement>>,
+}
+
+/// The provably-optimal simultaneous use of every owned facility for one target — a currency
+/// (`"coins"`/`"bud_tickets"`) or a byproduct pseudo-currency (`"wood_blocks"`/`"mineral_sand"` —
+/// see `crate::optimizer::byproduct_resource_name`) — target-independent: this is "what's the
+/// best I can do," computed before any goal amount is known. See
+/// `crate::optimizer::find_production_plan` for the algorithm, and
 /// `crate::optimizer::time_to_reach_goal` for turning this plan plus a goal amount into a
 /// [`GoalResult`]. See `BETA_NOTES.md` section 23 (and the follow-ups in sections 27–29, 43-46)
-/// for the full design writeup of the plan-solving side; this type originally also tracked Wood
-/// Blocks/Mineral Sand progress toward a Homeland/RV upgrade, dropped in section 30 since those
-/// are trivially obtained by expanding plots in-game and aren't worth optimizing for.
+/// for the full design writeup of the plan-solving side. Wood Blocks/Mineral Sand were originally
+/// tracked only as a passive `byproduct_rates` side effect (dropped as an optimization target in
+/// section 30, since they're trivially obtained by expanding plots) — reinstated as full targets
+/// once they became an actual chokepoint at high Homeland levels; a run targeting one of them
+/// dedicates Woodland/Mineral Pile to whichever item yields the most of it, and `byproduct_rates`
+/// is simply left empty for that run (it would otherwise double-count the same total).
 #[derive(Debug, Clone)]
 pub struct ProductionPlan {
-    /// The currency this plan was optimized for: `"coins"` or `"bud_tickets"`
+    /// The target this plan was optimized for: a currency (`"coins"`/`"bud_tickets"`) or a
+    /// byproduct pseudo-currency (`"wood_blocks"`/`"mineral_sand"`)
     pub currency: String,
     /// Combined steady-state rate (currency units/sec) once every income stream's lead time has
     /// passed — the sum of `income_streams`' `rate_per_second`. The headline "your rate" number.
@@ -264,6 +356,11 @@ pub struct ProductionPlan {
     /// contributions to the same resource can have different lead times — summed into totals by
     /// `time_to_reach_goal` once a plan's duration is known.
     pub byproduct_rates: Vec<(String, f64, f64)>,
+    /// How each owned environment building (Heat Furnace/Cooling Unit/Sunlamp) is configured —
+    /// one entry per (building, mode, preset) combination actually in use. Empty for buildings
+    /// with no profitable coverage to provide, same "just doesn't appear" convention as an
+    /// unused processor recipe.
+    pub environment_assignments: Vec<EnvironmentAssignment>,
 }
 
 /// Result of turning a [`ProductionPlan`] plus a goal amount into a concrete time-to-target — the
@@ -283,6 +380,10 @@ pub struct GoalResult {
     /// informational (section 38b). `(resource_name, total_amount)` pairs, omitting any resource
     /// with a zero total.
     pub byproducts: Vec<(String, f64)>,
+    /// How many seeds to have ready for each grower crop actually being planted, so a player can
+    /// plan ahead rather than run out mid-plan. Empty entries (zero plantings needed, e.g. the
+    /// goal is already met) are omitted.
+    pub seed_requirements: Vec<SeedRequirement>,
 }
 
 /// Calculated efficiency metrics for a production item.
@@ -292,7 +393,17 @@ pub struct GoalResult {
 pub struct ProductionEfficiency {
     /// The production item being evaluated
     pub item: ProductionItem,
-    /// Profit generated per second of production time
+    /// The LP objective value for one batch of `item`, given whatever target
+    /// `calculate_efficiencies` was called with: net profit (sell revenue minus ingredient cost)
+    /// for a currency target (`"coins"`/`"bud_tickets"`), or just the raw byproduct amount for a
+    /// byproduct target (`"wood_blocks"`/`"mineral_sand"` — see
+    /// `crate::optimizer::byproduct_resource_name`), since there's no currency involved there and
+    /// maximizing raw output IS the goal. `solve_facility_allocation` and the rest of the modern
+    /// pipeline use this directly instead of recomputing `sell_value * yield_amount - raw_cost`,
+    /// so a byproduct target is a drop-in substitution rather than a second code path.
+    pub batch_value: f64,
+    /// `batch_value` divided by `total_time_per_unit`'s steady-state counterpart — see
+    /// `batch_value`'s doc comment for what "value" means depending on the target.
     pub profit_per_second: f64,
     /// Profit generated per unit of energy consumed
     pub profit_per_energy: Option<f64>,
@@ -316,20 +427,30 @@ pub struct ProductionEfficiency {
     pub effective_profit_per_second: f64,
     /// Raw material details for optimal allocation: Vec<(name, amount_per_batch, time_per_batch)>
     pub raw_material_details: Option<Vec<(String, u32, f64)>>,
-    /// Fertilizer batches needed per production batch (0 if no fertilizer required)
-    pub fertilizer_per_batch: u32,
-    /// Every FACILITY touched anywhere in this item's ingredient tree (including this item's own
-    /// facility, and any intermediate processing steps, not just direct/root raw materials),
-    /// paired with its accumulated utilization (batches/sec of whatever runs there, weighted by
-    /// that item's own production time — see `optimizer::compute_resource_demand`) required per
-    /// one batch/sec of this item, and which item name(s) are hosted there in this tree. Used
-    /// both to compute `effective_profit_per_second` correctly when multiple branches (or
+    /// Every (facility, item) pair touched anywhere in this item's ingredient tree (including
+    /// this item's own facility/name, and any intermediate processing steps, not just
+    /// direct/root raw materials), paired with its accumulated utilization (batches/sec of
+    /// whatever runs there, weighted by that item's own production time — see
+    /// `optimizer::compute_resource_demand`) required per one batch/sec of this item.
+    ///
+    /// One entry per DISTINCT item hosted at a facility — a facility can appear multiple times
+    /// here (once per distinct item grown/processed there for this chain), e.g. caramel_nut_chips
+    /// needs walnut, chestnut, AND maple_syrup all from Woodland, three separate entries. This
+    /// used to be a single combined `(facility, total_utilization, Vec<hosted_item_names>)` entry
+    /// per facility — collapsing multiple items' utilization together and forcing callers to pick
+    /// just `hosted.first()` to know "the" item, which silently discarded every other ingredient
+    /// sharing that facility (a real bug: caramel_nut_chips was shown growing only walnut, with
+    /// chestnut and maple_syrup — both required — never displayed or allocated a single plot).
+    /// Per-item entries fix that at the source; anything needing a facility-wide total now sums
+    /// across every entry matching that facility name.
+    ///
+    /// Used both to compute `effective_profit_per_second` correctly when multiple branches (or
     /// multiple different items) share one facility — e.g. soy_sauce_tofu's soy_sauce and tofu
     /// both drawing from the same Farmland soybean supply — and to find leftover capacity on any
     /// touched facility, including intermediate processors like Carousel Mill, not just direct
     /// raw-material suppliers, whose owned count exceeds what this item's true bottleneck-limited
     /// rate actually needs.
-    pub facility_demand: Vec<(String, f64, Vec<String>)>,
+    pub facility_demand: Vec<(String, String, f64)>,
 }
 
 /// Tracks the number of each facility type available.
@@ -541,6 +662,9 @@ pub struct FarmlandRow {
     /// Module requirement (format: "module_name:level" or empty)
     #[serde(default)]
     pub module_requirement: Option<String>,
+    /// Growing environment required (e.g. "Cool", "Warm", "Adequate"), empty if none
+    #[serde(default)]
+    pub environment: Option<String>,
 }
 
 /// CSV row structure for Woodland items.
@@ -569,6 +693,9 @@ pub struct WoodlandRow {
     /// Module requirement (format: "module_name:level" or empty)
     #[serde(default)]
     pub module_requirement: Option<String>,
+    /// Growing environment required (e.g. "Cool", "Warm", "Scorching"), empty if none
+    #[serde(default)]
+    pub environment: Option<String>,
 }
 
 /// CSV row structure for Mineral Pile items.
@@ -598,6 +725,11 @@ pub struct MineralRow {
     /// Module requirement (format: "module_name:level" or empty)
     #[serde(default)]
     pub module_requirement: Option<String>,
+    /// Growing environment required (e.g. "Cool", "Freeze", "Adequate"), empty if none. Always
+    /// empty for Mineral Pile itself (mining isn't weather-dependent) even though this row shape
+    /// is shared with the Aniimo-material facilities that do need one.
+    #[serde(default)]
+    pub environment: Option<String>,
 }
 
 /// CSV row structure for processing facilities with energy tracking.

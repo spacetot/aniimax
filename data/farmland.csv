@@ -1,16 +1,16 @@
-name, cost, sell_value, production_time, yield, energy, facility_level, module_requirement
-wheat, 0, 1, 150, 5, 300, 1,
-quick_wheat, 0, 1, 150, 8, 300, 1, ecological_module:1
-potatoes, 2, 5, 450, 6, 380, 2,
-sugarcane, 3, 9, 750, 5, 760, 2,
-rice, 3, 5, 750, 10, 380, 2,
-cotton, 9, 23, 2250, 6, 0, 2,
-strawberry, 24, 72, 2250, 5, 2090, 3,
-soybean, 24, 45, 2250, 8, 1300, 3,
-lavender, 63, 189, 2250, 5, 0, 4,
-agave, 63, 236, 2250, 4, 0, 4,
-rose, 63, 158, 2250, 6, 0, 4,
-quick_rose, 63, 158, 2250, 9, 0, 4, ecological_module:4
-grape, 102, 306, 2250, 5, 2510, 5,
-ginseng, 102, 765, 2250, 2, 6270, 5,
-pumpkin, 170, 1530, 4500, 1, 12540, 5,
+name, cost, sell_value, production_time, yield, energy, facility_level, module_requirement, environment
+wheat, 0, 1, 150, 5, 300, 1, ,
+quick_wheat, 0, 1, 150, 8, 300, 1, ecological_module:1,
+potatoes, 2, 5, 450, 6, 380, 2, ,
+sugarcane, 3, 9, 750, 5, 760, 2, ,
+rice, 3, 5, 750, 10, 380, 2, ,
+cotton, 9, 23, 2250, 6, 0, 2, ,
+strawberry, 24, 72, 2250, 5, 2090, 3, ,
+soybean, 24, 45, 2250, 8, 1300, 3, ,
+lavender, 63, 189, 2250, 5, 0, 4, , Cool
+agave, 63, 236, 2250, 4, 0, 4, , Warm
+rose, 63, 158, 2250, 6, 0, 4, , Cool
+quick_rose, 63, 158, 2250, 9, 0, 4, ecological_module:4, Cool
+grape, 102, 306, 2250, 5, 2510, 5, , Adequate
+ginseng, 102, 765, 2250, 2, 6270, 5, , Cool
+pumpkin, 170, 1530, 4500, 1, 12540, 5, , Adequate

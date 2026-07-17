@@ -92,9 +92,9 @@ pub fn load_farmland(path: &Path) -> Result<Vec<ProductionItem>, Box<dyn Error>>
             energy: row.energy,
             facility_level: row.facility_level,
             module_requirement: parse_module_requirement(&row.module_requirement),
-            requires_fertilizer: row.facility_level >= 4, // Farmland level 4+ requires fertilizer
             workload: None,
             byproduct: None,
+            environment: row.environment,
         });
     }
     Ok(items)
@@ -143,11 +143,11 @@ pub fn load_woodland(path: &Path) -> Result<Vec<ProductionItem>, Box<dyn Error>>
             energy,
             facility_level: row.facility_level,
             module_requirement: parse_module_requirement(&row.module_requirement),
-            requires_fertilizer: row.facility_level >= 3, // Woodland level 3+ requires fertilizer
             workload: None,
             byproduct: row
                 .byproduct_yield
                 .map(|amt| ("Wood Blocks".to_string(), amt)),
+            environment: row.environment,
         });
     }
     Ok(items)
@@ -200,11 +200,11 @@ pub fn load_workload_raw_material(
             energy: None,
             facility_level: row.facility_level,
             module_requirement: parse_module_requirement(&row.module_requirement),
-            requires_fertilizer: false,
             workload: Some(row.workload),
             byproduct: row
                 .byproduct_yield
                 .map(|amt| (byproduct_name.to_string(), amt)),
+            environment: row.environment,
         });
     }
     Ok(items)
@@ -227,7 +227,12 @@ pub fn load_grass_blossom_mat(path: &Path) -> Result<Vec<ProductionItem>, Box<dy
 /// Loads Tidewhisper Sandcastle data (thin wrapper over [`load_workload_raw_material`]).
 ///
 /// Facility level guessed as 1 (unconfirmed) — see `BETA_NOTES.md` section 19. Every item here
-/// requires a specific growing environment (Cool/Freeze) not yet modeled as a hard gate.
+/// requires a growing environment (pearl/quick_pearl: Cool, love_bubble: Freeze) — tracked via
+/// `environment`, but NOT yet enforced as a capacity constraint like Farmland/Woodland are
+/// (see `crate::optimizer::solve_facility_allocation`): no environment-building coverage numbers
+/// have been confirmed for this facility type, only for Farmland (24/unit) and Woodland
+/// (12/unit). `quick_pearl` itself is not yet in the CSV — its stats
+/// (sell_value/workload/yield/byproduct) aren't confirmed either.
 pub fn load_tidewhisper_sandcastle(path: &Path) -> Result<Vec<ProductionItem>, Box<dyn Error>> {
     load_workload_raw_material(path, "Tidewhisper Sandcastle", "Mineral Sand")
 }
@@ -235,7 +240,9 @@ pub fn load_tidewhisper_sandcastle(path: &Path) -> Result<Vec<ProductionItem>, B
 /// Loads Starfall Hammock data (thin wrapper over [`load_workload_raw_material`]).
 ///
 /// Facility level guessed as 1 (unconfirmed) — see `BETA_NOTES.md` section 19. Requires a
-/// "Cool" growing environment, not yet modeled as a hard gate.
+/// "Cool" growing environment — tracked via `environment`, but not yet enforced as a capacity
+/// constraint (no environment-building coverage numbers confirmed for this facility type; only
+/// Farmland/Woodland are, see `crate::optimizer::solve_facility_allocation`).
 pub fn load_starfall_hammock(path: &Path) -> Result<Vec<ProductionItem>, Box<dyn Error>> {
     load_workload_raw_material(path, "Starfall Hammock", "Mineral Sand")
 }
@@ -243,7 +250,9 @@ pub fn load_starfall_hammock(path: &Path) -> Result<Vec<ProductionItem>, Box<dyn
 /// Loads Dewy House data (thin wrapper over [`load_workload_raw_material`]).
 ///
 /// Facility level guessed as 1 (unconfirmed) — see `BETA_NOTES.md` section 19. Requires a
-/// "Warm" growing environment, not yet modeled as a hard gate.
+/// "Warm" growing environment — tracked via `environment`, but not yet enforced as a capacity
+/// constraint (no environment-building coverage numbers confirmed for this facility type; only
+/// Farmland/Woodland are, see `crate::optimizer::solve_facility_allocation`).
 pub fn load_dewy_house(path: &Path) -> Result<Vec<ProductionItem>, Box<dyn Error>> {
     load_workload_raw_material(path, "Dewy House", "Mineral Sand")
 }
@@ -295,9 +304,9 @@ pub fn load_processing_with_energy(
             energy: row.energy,
             facility_level: row.facility_level,
             module_requirement: parse_module_requirement(&row.module_requirement),
-            requires_fertilizer: false,
             workload: row.workload,
             byproduct: None,
+            environment: None,
         });
     }
     Ok(items)
@@ -350,9 +359,9 @@ pub fn load_processing_no_energy(
             energy: None,
             facility_level: row.facility_level,
             module_requirement: parse_module_requirement(&row.module_requirement),
-            requires_fertilizer: false,
             workload: row.workload,
             byproduct: None,
+            environment: None,
         });
     }
     Ok(items)
@@ -397,9 +406,9 @@ pub fn load_nimbus_bed(path: &Path) -> Result<Vec<ProductionItem>, Box<dyn Error
             energy: None,
             facility_level: 1,
             module_requirement: None,
-            requires_fertilizer: false,
             workload: Some(row.workload),
             byproduct: None,
+            environment: None,
         });
     }
     Ok(items)
