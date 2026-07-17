@@ -14,6 +14,23 @@ use crate::models::{
     ProductionPath, ProductionStep, SeedRequirement,
 };
 
+/// Milliseconds since an arbitrary but consistent epoch, for measuring elapsed wall-clock time.
+/// `std::time::Instant::now()` panics under `wasm32-unknown-unknown` (no OS clock to read), so the
+/// wasm build reads the browser's clock via `js-sys` instead; the native build (CLI, tests) uses
+/// the real `Instant` API. Only ever compared against another `now_ms()` call, so the two
+/// platforms' different epochs don't need to agree with each other.
+#[cfg(target_arch = "wasm32")]
+fn now_ms() -> f64 {
+    js_sys::Date::now()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn now_ms() -> f64 {
+    use std::sync::OnceLock;
+    static START: OnceLock<std::time::Instant> = OnceLock::new();
+    START.get_or_init(std::time::Instant::now).elapsed().as_secs_f64() * 1000.0
+}
+
 /// Calculates the optimal allocation of facilities to minimize production time
 /// when producing multiple different materials.
 /// 
@@ -2913,6 +2930,71 @@ fn solve_environment_and_facility_allocation(
     Some((mode_counts, placements, layouts, coverage_bounds, candidates))
 }
 
+/// Re-solves the whole environment-coverage-and-allocation pipeline with `to_exclude` added to
+/// `excluded`, returning the resulting plan's real total value alongside the state needed to keep
+/// it if it wins; `None` only if excluding everything in `to_exclude` makes the candidate set
+/// infeasible (nothing profitable anywhere). Factored out of `find_production_plan`'s
+/// environment-coverage-CHOICE exclusion loop so it can try excluding more than one candidate at
+/// once (see that loop's own doc comment for why a single exclusion at a time isn't always
+/// enough).
+#[allow(clippy::too_many_arguments)]
+fn try_environment_exclusion_set(
+    items: &[ProductionItem],
+    item_map: &HashMap<&str, &ProductionItem>,
+    effs: &[ProductionEfficiency],
+    facility_counts: &FacilityCounts,
+    byproduct_floors: &[(&str, f64)],
+    trial_count: &mut u32,
+    excluded: &HashSet<String>,
+    to_exclude: &[&str],
+) -> Option<(
+    f64,
+    HashMap<(&'static str, &'static str), u32>,
+    HashMap<&'static str, Vec<(crate::coverage::Placement, u32)>>,
+    HashMap<&'static str, Vec<Vec<crate::coverage::Placement>>>,
+    HashMap<(String, String), u32>,
+    Vec<ProductionEfficiency>,
+)> {
+    let mut test_excluded = excluded.clone();
+    for &name in to_exclude {
+        test_excluded.insert(name.to_string());
+    }
+    let test_effs: Vec<ProductionEfficiency> =
+        effs.iter().filter(|e| !test_excluded.contains(&e.item.name)).cloned().collect();
+    let (test_mode_counts, test_placements, test_layouts, test_coverage_bounds, test_candidates) =
+        solve_environment_and_facility_allocation(
+            items,
+            item_map,
+            &test_effs,
+            facility_counts,
+            byproduct_floors,
+            trial_count,
+        )?;
+    let test_allocation = solve_facility_allocation(
+        item_map,
+        &test_candidates,
+        facility_counts,
+        &test_coverage_bounds,
+        byproduct_floors,
+    );
+    *trial_count += 1;
+    let test_eff_by_name: HashMap<&str, &ProductionEfficiency> =
+        test_candidates.iter().map(|e| (e.item.name.as_str(), e)).collect();
+    let test_environment =
+        build_environment_assignment(item_map, &test_allocation, &test_eff_by_name, &test_placements);
+    let test_growers =
+        build_grower_assignment(items, &test_allocation, &test_eff_by_name, facility_counts, &test_environment);
+    let test_total = total_final_value(
+        items,
+        item_map,
+        &test_allocation,
+        &test_eff_by_name,
+        &test_growers,
+        &test_environment,
+    );
+    Some((test_total, test_mode_counts, test_placements, test_layouts, test_coverage_bounds, test_candidates))
+}
+
 /// Solves for the provably-optimal simultaneous use of every owned facility for one target,
 /// a currency (`"coins"`/`"bud_tickets"`) or byproduct pseudo-currency (`"wood_blocks"`/
 /// `"mineral_sand"`; see `byproduct_resource_name`), matching `calculate_efficiencies`'
@@ -3001,6 +3083,17 @@ pub fn find_production_plan(
     // (itself not free), so this caps the added cost to a small fixed multiple rather than letting
     // it scale with how many environment-gated chains are in play.
     const MAX_ENVIRONMENT_EXCLUSIONS: u32 = 3;
+    // Wall-clock budget for the pairs fallback below, shared across every outer round: a fixed
+    // trial count can't account for how expensive each trial is on a given input (each pair trial
+    // reruns the same full pipeline as a single-candidate trial, and that cost itself scales with
+    // owned environment-building count), so a handful of pairs on one scenario can be near-instant
+    // while the same count on another takes many seconds. The pairs fallback only fires when
+    // single exclusions already found nothing to improve, an inherently rare path, so a bounded
+    // time budget keeps that rare path from ever feeling hung without needing to guess a trial
+    // count that's right for every input. Set lazily, the first time it's actually needed, so the
+    // budget measures time spent ON PAIRS specifically, not time already spent on the (possibly
+    // slow in its own right) single-candidate passes before it.
+    let mut pair_exclusion_deadline_ms: Option<f64> = None;
     for _ in 0..MAX_ENVIRONMENT_EXCLUSIONS {
         if total_environment_buildings > MAX_ENVIRONMENT_BUILDINGS_FOR_EXCLUSION_PASS {
             break;
@@ -3047,83 +3140,62 @@ pub fn find_production_plan(
             }
             counts.into_iter().filter(|(_, chains)| chains.len() > 1).map(|(mode, _)| mode).collect()
         };
-        // One representative per contested mode (the first still-producing, not-yet-excluded
-        // candidate touching it), not every chain touching one; a full trial re-solve here reruns
-        // the entire coverage-packing pipeline (not cheap, unlike the LP-only marginal-exclusion
-        // pass above), so this bounds the trial count by how many distinct SCARCE coverage pools
-        // are actually contested rather than by how many chains happen to touch one, which would
-        // retry every touching chain even when a scenario has no actual coverage-choice
-        // improvement to find.
-        let mut trial_candidates: Vec<&str> = contested_modes
+        // One representative per contested mode, not every chain touching one; a full trial
+        // re-solve here reruns the entire coverage-packing pipeline (not cheap, unlike the LP-only
+        // marginal-exclusion pass above), so this bounds the trial count by how many distinct
+        // SCARCE coverage pools are actually contested rather than by how many chains happen to
+        // touch one, which would retry every touching chain even when a scenario has no actual
+        // coverage-choice improvement to find. Prefer a currently-producing candidate (excluding
+        // it directly frees real capacity someone else could use); but a mode can ALSO end up with
+        // its coverage claimed by a chain that produces nothing at all once every other constraint
+        // (e.g. a downstream processor another chain has since monopolized) settles, so fall back
+        // to any not-yet-excluded candidate touching the mode rather than silently dropping it: a
+        // zero-producing claimant can still be pinning the packing's static per-plot pricing toward
+        // a facility type that never converts that coverage into anything, starving a genuinely
+        // better alternative of the chance to be repriced at all.
+        // Owned `String`s, not `&str` borrowed from `candidates`: the exclusion trials below
+        // reassign `candidates` on success, which a borrow tied to the pre-trial `candidates`
+        // couldn't survive across.
+        let mut trial_candidates: Vec<String> = contested_modes
             .iter()
             .filter_map(|&mode| {
+                let touches_mode = |eff: &&ProductionEfficiency| {
+                    !environment_excluded.contains(&eff.item.name)
+                        && environment_modes.get(eff.item.name.as_str()).is_some_and(|modes| modes.contains(mode))
+                };
                 candidates
                     .iter()
+                    .filter(touches_mode)
                     .find(|eff| {
-                        !environment_excluded.contains(&eff.item.name)
-                            && environment_modes
-                                .get(eff.item.name.as_str())
-                                .is_some_and(|modes| modes.contains(mode))
-                            && {
-                                let rate = allocation.get(eff.item.name.as_str()).copied().unwrap_or(0.0);
-                                final_rate_for(items, &item_map, eff, rate, &grower_assignment, &environment_assignment)
-                                    > 0.0
-                            }
+                        let rate = allocation.get(eff.item.name.as_str()).copied().unwrap_or(0.0);
+                        final_rate_for(items, &item_map, eff, rate, &grower_assignment, &environment_assignment) > 0.0
                     })
-                    .map(|eff| eff.item.name.as_str())
+                    .or_else(|| candidates.iter().filter(touches_mode).min_by_key(|eff| &eff.item.name))
+                    .map(|eff| eff.item.name.clone())
             })
-            .collect::<HashSet<&str>>()
+            .collect::<HashSet<String>>()
             .into_iter()
             .collect();
         trial_candidates.sort_unstable();
 
         let mut improved = false;
-        for candidate_name in trial_candidates {
-            let mut test_excluded = environment_excluded.clone();
-            test_excluded.insert(candidate_name.to_string());
-            let test_effs: Vec<ProductionEfficiency> =
-                effs.iter().filter(|e| !test_excluded.contains(&e.item.name)).cloned().collect();
-            let Some((test_mode_counts, test_placements, test_layouts, test_coverage_bounds, test_candidates)) =
-                solve_environment_and_facility_allocation(
+        for candidate_name in &trial_candidates {
+            let Some((test_total, test_mode_counts, test_placements, test_layouts, test_coverage_bounds, test_candidates)) =
+                try_environment_exclusion_set(
                     items,
                     &item_map,
-                    &test_effs,
+                    &effs,
                     facility_counts,
                     &byproduct_floors,
                     &mut trial_count,
+                    &environment_excluded,
+                    &[candidate_name.as_str()],
                 )
             else {
                 continue;
             };
-            let test_allocation = solve_facility_allocation(
-                &item_map,
-                &test_candidates,
-                facility_counts,
-                &test_coverage_bounds,
-                &byproduct_floors,
-            );
-            trial_count += 1;
-            let test_eff_by_name: HashMap<&str, &ProductionEfficiency> =
-                test_candidates.iter().map(|e| (e.item.name.as_str(), e)).collect();
-            let test_environment =
-                build_environment_assignment(&item_map, &test_allocation, &test_eff_by_name, &test_placements);
-            let test_growers = build_grower_assignment(
-                items,
-                &test_allocation,
-                &test_eff_by_name,
-                facility_counts,
-                &test_environment,
-            );
-            let test_total = total_final_value(
-                items,
-                &item_map,
-                &test_allocation,
-                &test_eff_by_name,
-                &test_growers,
-                &test_environment,
-            );
             if test_total > current_total + 1e-9 {
-                environment_excluded.insert(candidate_name.to_string());
+                environment_excluded.insert(candidate_name.clone());
                 mode_counts = test_mode_counts;
                 placements = test_placements;
                 layouts = test_layouts;
@@ -3131,6 +3203,58 @@ pub fn find_production_plan(
                 candidates = test_candidates;
                 improved = true;
                 break;
+            }
+        }
+        // A single exclusion only frees coverage if whatever's left over can actually use it; two
+        // unrelated chains can EACH individually look like the current best use of their own
+        // contested mode while jointly blocking a genuinely better third option (e.g. one chain
+        // pins a shared building's coverage toward a facility type that isn't actually profitable
+        // once a SEPARATE chain has already monopolized the downstream processor the real
+        // alternative needs), so neither one's solo exclusion trial ever shows an improvement even
+        // though excluding both together would. Bounded by `pair_exclusion_deadline` (shared
+        // across every outer round, see its own comment), not just by how many pairs
+        // `trial_candidates` could form; each pair trial costs as much as a full single-candidate
+        // trial, so trying every combination scales badly even though `trial_candidates` itself
+        // stays small.
+        if !improved && trial_candidates.len() > 1 {
+            let deadline_ms = *pair_exclusion_deadline_ms.get_or_insert_with(|| now_ms() + 2000.0);
+            'pairs: for i in 0..trial_candidates.len() {
+                for j in (i + 1)..trial_candidates.len() {
+                    if now_ms() >= deadline_ms {
+                        break 'pairs;
+                    }
+                    let pair = [trial_candidates[i].as_str(), trial_candidates[j].as_str()];
+                    let Some((
+                        test_total,
+                        test_mode_counts,
+                        test_placements,
+                        test_layouts,
+                        test_coverage_bounds,
+                        test_candidates,
+                    )) = try_environment_exclusion_set(
+                        items,
+                        &item_map,
+                        &effs,
+                        facility_counts,
+                        &byproduct_floors,
+                        &mut trial_count,
+                        &environment_excluded,
+                        &pair,
+                    ) else {
+                        continue;
+                    };
+                    if test_total > current_total + 1e-9 {
+                        environment_excluded.insert(pair[0].to_string());
+                        environment_excluded.insert(pair[1].to_string());
+                        mode_counts = test_mode_counts;
+                        placements = test_placements;
+                        layouts = test_layouts;
+                        coverage_bounds = test_coverage_bounds;
+                        candidates = test_candidates;
+                        improved = true;
+                        break 'pairs;
+                    }
+                }
             }
         }
         if !improved {

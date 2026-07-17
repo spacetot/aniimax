@@ -1654,3 +1654,54 @@ fn test_environment_coverage_choice_does_not_settle_for_a_worse_joint_split() {
         plan.rate_per_second
     );
 }
+
+// Same facility setup as `test_environment_coverage_choice_does_not_settle_for_a_worse_joint_split`
+// above, except with Farmland at 30 instead of 28. Every crop the environment-coverage packing
+// weighs for "Adequate" (pine, grape) and "Cool" (walnut, ginseng) shares the exact same batch
+// profit (1428) and cycle time (2250s), and dried_grapes/herbs (their downstream recipes) share
+// the exact same sell value (2040) too; with the whole decision that tied, which facility type
+// ends up covered can flip on unrelated pressure elsewhere. At 30 Farmland specifically,
+// quick_rose (a Farmland crop that only becomes profitable once there's enough spare Farmland and
+// Cool coverage to grow it) ends up monopolizing both owned Phonolfactory Tables for its own
+// premium_rose_incense/rose_incense chain, starving pine's only outlet (cedarwood_incense, also a
+// Phonolfactory Table recipe) even after the exclusion pass's pairs fallback (see
+// `find_production_plan`'s environment-coverage-CHOICE exclusion pass) tries every pair of
+// contested-mode candidates it can afford within its time budget; recovering the truly optimal
+// pine+ginseng split here would need a three-way combined exclusion, which isn't attempted. Locks
+// in the current, verified-by-hand total rather than asserting monotonicity against the
+// Farmland=28 case, since that would incorrectly claim this specific edge case is fully resolved.
+#[test]
+fn test_environment_coverage_choice_pairs_fallback_finds_a_real_improvement_even_when_incomplete() {
+    let data_dir = Path::new("data");
+    if !data_dir.exists() {
+        return;
+    }
+    let items = load_all_data(data_dir).expect("Failed to load data");
+    let modules = ModuleLevels { ecological_module: 4, kitchen_module: 4, mineral_detector: 4, crafting_module: 4 };
+    let counts = FacilityCounts::from_pairs(&[
+        ("Farmland", 30, 5),
+        ("Woodland", 14, 4),
+        ("Mineral Pile", 7, 4),
+        ("Heat Furnace", 3, 1),
+        ("Cooling Unit", 3, 1),
+        ("Sunlamp", 1, 1),
+        ("Nimbus Bed", 1, 1),
+        ("Grass Blossom Mat", 1, 1),
+        ("Starfall Hammock", 1, 1),
+        ("Tidewhisper Sandcastle", 1, 1),
+        ("Dewy House", 1, 1),
+        ("Carousel Mill", 2, 3),
+        ("Phonolfactory Table", 2, 3),
+        ("Bouncy Brew Keg", 2, 2),
+        ("Crafting Table", 2, 4),
+        ("Claw Game Cooker", 2, 3),
+        ("Joy Wheel Loom", 2, 3),
+        ("Jukebox Dryer", 2, 4),
+    ]);
+    let plan = find_production_plan(&items, "coins", &counts, &modules, false).expect("plan should be feasible");
+    assert!(
+        (plan.rate_per_second - 45.14837001594896).abs() < 1e-3,
+        "expected the current best-effort total (~45.15 coins/sec); got {}",
+        plan.rate_per_second
+    );
+}
