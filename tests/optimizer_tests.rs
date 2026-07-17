@@ -1462,6 +1462,62 @@ fn test_prioritize_byproducts_forces_max_wood_blocks_rate_at_a_real_coin_cost() 
     );
 }
 
+// `prioritize_byproducts`'s floor for each byproduct used to be computed by an isolated sub-solve
+// (only byproduct-yielding candidates in play) that priced environment coverage purely by
+// byproduct value; a byproduct-yielding item competing for a shared building (here, Woodland's
+// pine needing "Adequate") would get every scrap of that building's coverage in that isolated
+// sub-solve, then the floor would be set to whatever rate that generous coverage produced. But the
+// REAL solve prices that same coverage by coin value, and Farmland's grape/ginseng/pumpkin (also
+// wanting "Adequate", genuinely more profitable) would win most of the single owned Sunlamp's
+// coverage, leaving pine far less than the isolated sub-solve assumed -- making the floor
+// unreachable and the whole plan spuriously report as infeasible even though a real, profitable
+// plan exists (confirmed by `prioritize_byproducts: false` below). Only Sunlamp is owned (no Heat
+// Furnace/Cooling Unit), so "Adequate" is the only mode with any coverage at all, forcing Farmland
+// and Woodland to genuinely compete for the exact same scarce building.
+#[test]
+fn test_prioritize_byproducts_does_not_force_an_unreachable_floor_when_coverage_is_contested() {
+    let data_dir = Path::new("data");
+    if !data_dir.exists() {
+        return;
+    }
+    let items = load_all_data(data_dir).expect("Failed to load data");
+    let modules = ModuleLevels { ecological_module: 4, kitchen_module: 4, mineral_detector: 4, crafting_module: 4 };
+    let counts = FacilityCounts::from_pairs(&[
+        ("Farmland", 28, 5),
+        ("Woodland", 14, 4),
+        ("Mineral Pile", 7, 4),
+        ("Sunlamp", 1, 1),
+        ("Nimbus Bed", 1, 1),
+        ("Grass Blossom Mat", 1, 1),
+        ("Starfall Hammock", 1, 1),
+        ("Tidewhisper Sandcastle", 1, 1),
+        ("Dewy House", 1, 1),
+        ("Carousel Mill", 2, 3),
+        ("Phonolfactory Table", 2, 3),
+        ("Bouncy Brew Keg", 2, 2),
+        ("Crafting Table", 2, 4),
+        ("Claw Game Cooker", 2, 3),
+        ("Joy Wheel Loom", 2, 3),
+        ("Jukebox Dryer", 2, 4),
+    ]);
+
+    let unprioritized =
+        find_production_plan(&items, "coins", &counts, &modules, false).expect("plan should be feasible");
+
+    let prioritized = find_production_plan(&items, "coins", &counts, &modules, true);
+    assert!(
+        prioritized.is_some(),
+        "prioritizing byproducts should never turn a genuinely feasible plan into a reported \
+         failure; the floor must reflect what the byproduct-yielding item can actually get once \
+         currency-priced candidates have their share of the same scarce coverage"
+    );
+    assert!(
+        (prioritized.unwrap().rate_per_second - unprioritized.rate_per_second).abs() < 1e-6,
+        "with nothing else to trade away for byproduct output here, prioritizing should reach the \
+         same rate as not prioritizing"
+    );
+}
+
 // When `currency` is itself already a byproduct target, prioritizing is a no-op (the whole plan
 // already IS byproduct maximization); confirms the gate in `find_production_plan` correctly
 // skips computing/applying floors in that case rather than redundantly re-solving.

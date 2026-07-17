@@ -2614,29 +2614,28 @@ fn build_processor_usage<'a>(
 }
 
 /// The true maximum byproduct rate achievable for `byproduct_currency` (`"wood_blocks"` or
-/// `"mineral_sand"`) using ALL of `facility_counts`, computed by running the exact same pipeline
-/// `find_production_plan` itself uses (efficiencies → environment coverage → facility-allocation
-/// LP) with that byproduct as the sole target and no floor of its own; i.e. "if every owned
-/// Woodland/Mineral Pile plot were free to be dedicated purely to maximizing this byproduct, what
-/// rate would that achieve?" Used by `find_production_plan`'s `prioritize_byproducts` to compute
-/// the floor it then forces the real (profit-targeting) solve to meet.
+/// `"mineral_sand"`) GIVEN `coverage_bounds`, computed by running the same
+/// efficiencies → facility-allocation LP pipeline `find_production_plan` itself uses, with that
+/// byproduct as the sole target and no floor of its own. `coverage_bounds` is the REAL solve's own
+/// environment-coverage allocation (see `find_production_plan_with_progress`'s doc comment on why
+/// this can't solve its own, byproduct-priced coverage independently): a byproduct-yielding item
+/// competing for a shared environment building (e.g. Woodland's pine, needing "Adequate") gets
+/// however much of that building the real, currency-priced candidates actually leave it, not
+/// however much it could claim if every byproduct-yielding item had that coverage all to itself.
+/// Used by `find_production_plan`'s `prioritize_byproducts` to compute the floor it then forces
+/// the real (profit-targeting) solve to meet; a floor computed any more optimistically than what
+/// the real solve's own coverage allocation can actually support would force an unreachable
+/// target, making the whole plan spuriously infeasible.
 fn max_achievable_byproduct_rate(
     items: &[ProductionItem],
     byproduct_currency: &str,
     facility_counts: &FacilityCounts,
     module_levels: &ModuleLevels,
+    coverage_bounds: &HashMap<(String, String), u32>,
 ) -> f64 {
     let item_map: HashMap<&str, &ProductionItem> = items.iter().map(|i| (i.name.as_str(), i)).collect();
     let effs = calculate_efficiencies(items, byproduct_currency, facility_counts, module_levels);
-    let coverage_weights = compute_coverage_weights(&item_map, &effs);
-    let (_, placements, _) = solve_environment_coverage(&coverage_weights, facility_counts);
-    let mut coverage_bounds: HashMap<(String, String), u32> = HashMap::new();
-    for (&mode, placed) in &placements {
-        for (p, count) in placed {
-            *coverage_bounds.entry((p.facility.clone(), mode.to_string())).or_insert(0) += count;
-        }
-    }
-    let allocation = solve_facility_allocation(&item_map, &effs, facility_counts, &coverage_bounds, &[]);
+    let allocation = solve_facility_allocation(&item_map, &effs, facility_counts, coverage_bounds, &[]);
     effs.iter().filter_map(|eff| allocation.get(eff.item.name.as_str()).map(|&rate| eff.batch_value * rate)).sum()
 }
 
@@ -3062,11 +3061,34 @@ pub fn find_production_plan_with_progress(
     // See `find_production_plan`'s own doc comment on `prioritize_byproducts`: computed once
     // upfront (each is its own full sub-solve) and reused as a fixed floor for every
     // `solve_facility_allocation` call below, the same way `coverage_bounds` is.
+    //
+    // Each byproduct's own maximum is computed against `currency`'s OWN environment-coverage
+    // allocation (below), not a coverage pre-solve priced from the byproduct alone. A
+    // byproduct-yielding item can ALSO be environment-gated (e.g. Woodland's pine, needing
+    // "Adequate"), and if that coverage were priced purely by byproduct value, a byproduct-only
+    // sub-solve would happily hand it every scrap of a shared building's coverage; the REAL solve
+    // below prices that same coverage by `currency` value instead, and a genuinely more profitable
+    // `currency` candidate elsewhere (e.g. Farmland's grape, also wanting "Adequate") can win most
+    // of it, leaving the byproduct-yielding item far less than the isolated sub-solve assumed.
+    // Computing the floor against the coverage IT WILL ACTUALLY GET, rather than the coverage it
+    // could claim in isolation, is what keeps this floor honest: forcing a floor no real solve can
+    // reach makes the whole plan spuriously infeasible, exactly the failure this avoids.
     let byproduct_floors: Vec<(&str, f64)> = if prioritize_byproducts && byproduct_resource_name(currency).is_none() {
+        let coverage_weights = compute_coverage_weights(&item_map, &effs);
+        let (_, placements, _) = solve_environment_coverage(&coverage_weights, facility_counts);
+        let mut coverage_bounds: HashMap<(String, String), u32> = HashMap::new();
+        for (&mode, placed) in &placements {
+            for (p, count) in placed {
+                *coverage_bounds.entry((p.facility.clone(), mode.to_string())).or_insert(0) += count;
+            }
+        }
         [("wood_blocks", "Wood Blocks"), ("mineral_sand", "Mineral Sand")]
             .into_iter()
             .map(|(target, resource)| {
-                (resource, max_achievable_byproduct_rate(items, target, facility_counts, module_levels))
+                (
+                    resource,
+                    max_achievable_byproduct_rate(items, target, facility_counts, module_levels, &coverage_bounds),
+                )
             })
             .collect()
     } else {
