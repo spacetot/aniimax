@@ -2,13 +2,13 @@
 
 A command-line tool, Rust library, and **web application** for optimizing production paths in Aniimo Homeland. Calculate the fastest way to produce your target amount of Homeland currency, and see what every facility you own should be doing at once.
 
-This is a fork of [aebii's original Aniimax](https://github.com/ae-bii/aniimax), updated for the current beta with new facilities, Bud Tickets support, and a rebuilt facility-allocation engine for the web app (the CLI still uses the original approach; see [How the Optimization Works](#how-the-optimization-works) for the difference).
+Supports the current beta with the full facility roster, Bud Tickets, and a joint LP-based facility-allocation engine for the web app (the CLI uses a simpler greedy approach; see [How the Optimization Works](#how-the-optimization-works) for the difference).
 
 > **Note:** This project is a work in progress. Not all in-game items are included yet, and production times are assumed to match the values displayed in-game.
 
 ## Try It Online
 
-**[Launch Aniimax Web App](https://spacetot.github.io/aniimax/)** - No installation required!
+**[Launch Aniimax Web App](https://ae-bii.github.io/aniimax/)** - No installation required!
 
 ## Features
 
@@ -37,7 +37,7 @@ This is a fork of [aebii's original Aniimax](https://github.com/ae-bii/aniimax),
 ### Building from Source
 
 ```bash
-git clone https://github.com/spacetot/aniimax.git
+git clone https://github.com/ae-bii/aniimax.git
 cd aniimax
 cargo build --release
 ```
@@ -128,7 +128,7 @@ Options:
   -V, --version                      Print version
 ```
 
-> **CLI facility coverage:** the CLI currently only exposes the 7 facilities listed above. Any facility not listed here (Claw Game Cooker, Bouncy Brew Keg, Phonolfactory Table, Joy Wheel Loom, and the newer Aniimo-material facilities) defaults to 1 owned at level 1 when computing efficiencies. For full coverage of every current facility, use the [web app](https://spacetot.github.io/aniimax/) instead.
+> **CLI facility coverage:** the CLI currently only exposes the 7 facilities listed above. Any facility not listed here (Claw Game Cooker, Bouncy Brew Keg, Phonolfactory Table, Joy Wheel Loom, and the newer Aniimo-material facilities) defaults to 1 owned at level 1 when computing efficiencies. For full coverage of every current facility, use the [web app](https://ae-bii.github.io/aniimax/) instead.
 
 ## Example Output
 
