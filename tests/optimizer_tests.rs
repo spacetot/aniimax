@@ -232,10 +232,9 @@ fn test_parallel_production_increases_efficiency() {
     );
 }
 
-// `find_coin_plan` previously had no direct test coverage at all — every fix to it this session
-// was verified live in the browser by hand. These lock in the two real bugs found and fixed via
-// the LP rewrite (see BETA_NOTES.md): a shared root raw material being double-counted across
-// sibling branches, and idle processing capacity never being credited to a second item.
+// Regression tests locking in the LP-based allocation's core guarantees: a shared root raw
+// material must not be double-counted across sibling branches, and idle processing capacity must
+// be credited to a second item rather than left unused.
 
 #[test]
 fn test_find_coin_plan_shares_root_raw_material_across_branches() {
@@ -245,7 +244,7 @@ fn test_find_coin_plan_shares_root_raw_material_across_branches() {
     }
     let items = load_all_data(data_dir).expect("Failed to load data");
     // soy_sauce (Bouncy Brew Keg) and tofu (Carousel Mill) both need 8 soybean/batch from the
-    // same Farmland — deliberately no Woodland/Jukebox Dryer/Mineral Pile so no other Claw Game
+    // same Farmland; deliberately no Woodland/Jukebox Dryer/Mineral Pile so no other Claw Game
     // Cooker recipe can compete with soy_sauce_tofu for Farmland/Claw Game Cooker.
     let counts = FacilityCounts::from_pairs(&[
         ("Farmland", 20, 3),
@@ -267,7 +266,7 @@ fn test_find_coin_plan_shares_root_raw_material_across_branches() {
 
     // Correct rate (accounting for the shared 20-Farmland soybean supply) is ~6.1 coins/sec. A
     // per-branch calculation that lets each of soy_sauce/tofu assume exclusive access to all 20
-    // Farmland independently would double that to ~12.2 — assert well below that regression
+    // Farmland independently would double that to ~12.2; assert well below that regression
     // value, not just "some positive number".
     assert!(
         soy_sauce_tofu.rate_per_second > 4.0 && soy_sauce_tofu.rate_per_second < 8.0,
@@ -276,15 +275,11 @@ fn test_find_coin_plan_shares_root_raw_material_across_branches() {
     );
 }
 
-// Regression test for a real bug found by hand-verification: caramel_nut_chips needs nuts (itself
-// walnut + chestnut) AND maple_syrup, all three of which grow on Woodland — but the plan only ever
-// showed "walnut ... Used for caramel_nut_chips", with chestnut and maple_syrup completely absent.
-// Root cause: `facility_demand` used to store one combined (facility, total_utilization,
-// Vec<hosted_item_names>) entry per facility, and every consumer of it just took
-// `hosted.first()`, silently discarding every other item sharing that facility for the same
-// chain. Fixed by making `facility_demand` one entry PER item (`(facility, item_name,
-// utilization)`), and threading the item name through `grower_assignment`/`environment_assignment`
-// keys instead of re-deriving "the" hosted item from a list.
+// caramel_nut_chips needs nuts (itself walnut + chestnut) AND maple_syrup, all three of which grow
+// on Woodland; the plan must show every one of them, not just the first item found sharing that
+// facility for the chain. `facility_demand` keeps one entry PER item (`(facility, item_name,
+// utilization)`), so `grower_assignment`/`environment_assignment` can key off the specific item
+// name rather than an arbitrary "the" hosted item.
 #[test]
 fn test_multi_ingredient_chain_shows_every_grower_item_it_needs() {
     let data_dir = Path::new("data");
@@ -326,8 +321,8 @@ fn test_multi_ingredient_chain_shows_every_grower_item_it_needs() {
     }
 
     // All three genuinely need equal shares of Woodland (hand-verified: each needs utilization
-    // 2250 out of 6750 total — walnut 3/batch at yield 3, chestnut 6/batch at yield 3, maple_syrup
-    // 6/batch at yield 6, all against a 2250s cycle) — so with 12 owned plots the fair split is
+    // 2250 out of 6750 total; walnut 3/batch at yield 3, chestnut 6/batch at yield 3, maple_syrup
+    // 6/batch at yield 6, all against a 2250s cycle); so with 12 owned plots the fair split is
     // exactly 4 each, not 11/0/0 or any other lopsided split that would leave chestnut or
     // maple_syrup ungrowable.
     let counts_by_name: Vec<u32> = ["walnut", "chestnut", "maple_syrup"]
@@ -337,17 +332,11 @@ fn test_multi_ingredient_chain_shows_every_grower_item_it_needs() {
     assert_eq!(counts_by_name, vec![4, 4, 4], "expected an equal 3-way split of Woodland's 12 plots, got {counts_by_name:?}");
 }
 
-// Regression tests for a real bug found by hand-verification: turning on `prioritize_byproducts`
-// sometimes reported a HIGHER coin rate than leaving it off — mathematically impossible, since
-// adding a floor constraint can only ever lower or match the unconstrained optimum. Root cause:
-// `build_grower_assignment`'s independent per-facility rounding only checks whether a chain's rate
-// rounds all the way to ZERO, not whether keeping its rounded share is actually the more
-// profitable use of those plots — so a chain can survive rounding with a small, real-but-worse
-// foothold instead of being properly out-competed. The `prioritize_byproducts` floor happened to
-// perturb the continuous LP into a different (better) rounding by coincidence, exposing that the
-// UNCONSTRAINED solve wasn't finding the true optimum either. Fixed by extending
-// `find_production_plan`'s stranded-chain exclusion loop to also test excluding chains that share
-// a contested grower facility, keeping the exclusion if it genuinely improves the plan's total.
+// Turning on `prioritize_byproducts` can only ever lower or match the unconstrained coin rate,
+// since it adds a floor constraint; `find_production_plan`'s stranded-chain exclusion loop tests
+// excluding chains that share a contested grower facility and keeps the exclusion only if it
+// genuinely improves the plan's total, so a chain can't survive rounding with a small,
+// real-but-worse foothold that a more profitable competitor should have fully claimed instead.
 #[test]
 fn test_two_chains_sharing_a_grower_facility_settle_on_the_more_profitable_split() {
     let data_dir = Path::new("data");
@@ -356,7 +345,7 @@ fn test_two_chains_sharing_a_grower_facility_settle_on_the_more_profitable_split
     }
     let items = load_all_data(data_dir).expect("Failed to load data");
     // pine (-> cedarwood_incense, 17.23 profit/plot) and quick_lemon (-> premium_lemon_incense)
-    // both compete for this scarce Woodland — pine should win outright, not share a token plot
+    // both compete for this scarce Woodland; pine should win outright, not share a token plot
     // with quick_lemon just because quick_lemon's own rate doesn't round all the way to zero.
     let counts = FacilityCounts::from_pairs(&[
         ("Farmland", 3, 1),
@@ -375,7 +364,7 @@ fn test_two_chains_sharing_a_grower_facility_settle_on_the_more_profitable_split
     assert!(
         normal.rate_per_second >= prioritized.rate_per_second - 0.001,
         "unconstrained rate ({}) should never be less than the byproduct-floor-constrained rate \
-         ({}) — a constraint can only lower or match the optimum, never raise it",
+         ({}); a constraint can only lower or match the optimum, never raise it",
         normal.rate_per_second,
         prioritized.rate_per_second
     );
@@ -397,7 +386,7 @@ fn test_single_chain_using_multiple_grower_items_settles_on_the_more_profitable_
     let items = load_all_data(data_dir).expect("Failed to load data");
     // caramel_nut_chips (walnut+chestnut+maple_syrup, ALL from Woodland) survives rounding with a
     // small 1/1/1 split, but selling walnut alone is more profitable overall with this little
-    // Woodland capacity and no spare Jukebox Dryer contention to help it — the whole chain should
+    // Woodland capacity and no spare Jukebox Dryer contention to help it; the whole chain should
     // be dropped in favor of plain walnut, not kept alive on principle because its rate isn't
     // literally zero.
     let counts = FacilityCounts::from_pairs(&[
@@ -425,7 +414,7 @@ fn test_single_chain_using_multiple_grower_items_settles_on_the_more_profitable_
     assert!(
         normal.rate_per_second >= prioritized.rate_per_second - 0.001,
         "unconstrained rate ({}) should never be less than the byproduct-floor-constrained rate \
-         ({}) — a constraint can only lower or match the optimum, never raise it",
+         ({}); a constraint can only lower or match the optimum, never raise it",
         normal.rate_per_second,
         prioritized.rate_per_second
     );
@@ -439,15 +428,14 @@ fn test_single_chain_using_multiple_grower_items_settles_on_the_more_profitable_
     assert!(walnut.is_some_and(|s| s.facility_count == 4), "expected all 4 Woodland plots dedicated to walnut, got {:?}", normal.coin_items.iter().filter(|s| s.facility == "Woodland").collect::<Vec<_>>());
 }
 
-// Regression test for a real bug found by hand-verification (and reported live by a player): a
-// Sunlamp's limited "Adequate" coverage was being partly reserved for `grape` (Farmland), priced
-// via `jello` — a 5-facility chain (Farmland/grape, Woodland/quick_coconut, Carousel Mill,
-// Claw Game Cooker, Jukebox Dryer) whose STATIC "if fully dedicated" weight (1.78/plot) beat
-// pine/cedarwood_incense's real value (0.86/plot) for that shared Sunlamp coverage — even though
-// `jello` never actually gets produced once every other constraint in ITS OWN chain is accounted
-// for (confirmed: 0 units, in the real joint solve). That reserved-but-unused coverage starved
-// pine down to 3 of 4 Woodland plots (with the last plot going to a genuinely worse walnut
-// fallback) instead of the 4/4 it should get. Fixed with a two-pass refinement in
+// A Sunlamp's limited "Adequate" coverage can be partly reserved for a chain that never actually
+// produces anything: `jello`; a 5-facility chain (Farmland/grape, Woodland/quick_coconut,
+// Carousel Mill, Claw Game Cooker, Jukebox Dryer); has a STATIC "if fully dedicated" weight
+// (1.78/plot) that beats pine/cedarwood_incense's real value (0.86/plot) for that shared Sunlamp
+// coverage, even though `jello` never actually gets produced once every other constraint in its
+// own chain is accounted for (0 units in the real joint solve). That reserved-but-unused coverage
+// starves pine down to 3 of 4 Woodland plots (with the last plot going to a genuinely worse
+// walnut fallback) instead of the 4/4 it should get. Fixed with a two-pass refinement in
 // `find_production_plan`: solve once, recompute coverage weights using only chains that actually
 // survive with a positive final (rounded) rate, then re-solve once more.
 #[test]
@@ -510,10 +498,9 @@ fn test_find_coin_plan_processor_contention_dedicates_to_one_recipe_not_both() {
     // at Joy Wheel Loom: the loom has to spin the raw thread/rope AND weave the fabric, each its
     // own dedicated unit run continuously (a unit can only ever be "set and left" on ONE recipe,
     // never switched between two, or fractionally time-shared). With exactly 2 owned units, either
-    // chain alone can fully occupy the loom (1 unit spinning, 1 unit weaving) — but not both at
-    // once. Regression test for exactly that contention: an earlier pass let owned units be split
-    // fractionally across competing recipes (22%/3%-style), which isn't something a player can
-    // actually execute in-game.
+    // chain alone can fully occupy the loom (1 unit spinning, 1 unit weaving), but not both at
+    // once. Test guards against owned units being split fractionally across competing recipes
+    // (22%/3%-style), which isn't something a player can actually execute in-game.
     let counts = FacilityCounts::from_pairs(&[
         ("Woodland", 10, 3),
         ("Farmland", 20, 2),
@@ -538,7 +525,7 @@ fn test_find_coin_plan_processor_contention_dedicates_to_one_recipe_not_both() {
         produced
     );
 
-    // No processor row should ever describe a time-share percentage — every processor row is
+    // No processor row should ever describe a time-share percentage; every processor row is
     // either a whole dedicated unit or explicitly idle.
     let jwl_steps: Vec<&PlanStep> =
         plan.coin_items.iter().filter(|s| s.facility == "Joy Wheel Loom").collect();
@@ -552,7 +539,7 @@ fn test_find_coin_plan_processor_contention_dedicates_to_one_recipe_not_both() {
         "Joy Wheel Loom should be producing its chosen recipe, not sitting fully idle"
     );
 
-    // The recipe that lost the Joy Wheel Loom slot shouldn't just vanish — its raw material
+    // The recipe that lost the Joy Wheel Loom slot shouldn't just vanish; its raw material
     // capacity (Farmland or Woodland) should be reallocated to something else, not idle.
     let farmland_step = plan
         .coin_items
@@ -569,11 +556,11 @@ fn test_find_coin_plan_processor_contention_dedicates_to_one_recipe_not_both() {
     );
 }
 
-// A processor facility with exactly ONE profitable contributor previously took a shortcut that
-// reported the full owned count as dedicated to it, skipping the whole-unit/idle computation the
-// multi-contributor path already did correctly. With 2 owned Crafting Tables and a single trickle
-// of pearl (from 1 Tidewhisper Sandcastle) needing well under one unit's worth of capacity, only 1
-// Crafting Table should show as producing pearl_necklace, with the other genuinely idle.
+// A processor facility with exactly ONE profitable contributor must still go through the same
+// whole-unit/idle computation as the multi-contributor path, not just report the full owned count
+// as dedicated to it. With 2 owned Crafting Tables and a single trickle of pearl (from 1
+// Tidewhisper Sandcastle) needing well under one unit's worth of capacity, only 1 Crafting Table
+// should show as producing pearl_necklace, with the other genuinely idle.
 #[test]
 fn test_find_coin_plan_solo_processor_contributor_reports_true_need_not_full_owned_count() {
     let data_dir = Path::new("data");
@@ -621,11 +608,11 @@ fn test_find_coin_plan_solo_processor_contributor_reports_true_need_not_full_own
 
     // With the exact-geometry environment solver, Farmland's real per-building coverage (32, not
     // the old assumed 24) and Tidewhisper Sandcastle's now-enforced coverage cap both changed what
-    // else is profitable — woven_toy now also clears the bar alongside pearl_necklace, so both of
+    // else is profitable; woven_toy now also clears the bar alongside pearl_necklace, so both of
     // the 2 owned units get dedicated (one each), leaving none idle. The property this test
-    // actually guards — a low-throughput recipe (pearl_necklace, fed by "a trickle of pearl" from
+    // actually guards; a low-throughput recipe (pearl_necklace, fed by "a trickle of pearl" from
     // 1 Tidewhisper Sandcastle) gets capped to its true fractional need (1 unit), not inflated to
-    // claim every owned unit just because it's the only contributor — still holds per-recipe.
+    // claim every owned unit just because it's the only contributor; still holds per-recipe.
     assert_eq!(
         producing.len(),
         2,
@@ -678,7 +665,7 @@ fn test_seed_requirements_match_ceil_of_total_time_over_cycle_time() {
         assert!(step.is_grower, "seed requirements should only ever cover grower facilities, got: {:?}", req);
         assert!(
             req.facility == "Farmland" || req.facility == "Woodland",
-            "seeds only exist for Farmland/Woodland plots — Mineral Pile is mined and the \
+            "seeds only exist for Farmland/Woodland plots; Mineral Pile is mined and the \
              Aniimo-dispatch facilities are harvested via family dispatch, neither is planted, got: {:?}",
             req
         );
@@ -694,7 +681,7 @@ fn test_seed_requirements_match_ceil_of_total_time_over_cycle_time() {
         assert_eq!(req.total_seeds, req.seeds_per_plot * req.facility_count as u64);
     }
 
-    // No processor facility should ever appear — they aren't planted.
+    // No processor facility should ever appear; they aren't planted.
     let processor_names: Vec<&str> = plan
         .coin_items
         .iter()
@@ -707,7 +694,7 @@ fn test_seed_requirements_match_ceil_of_total_time_over_cycle_time() {
     );
 
     // Mineral Pile and Nimbus Bed are growers too (whole-unit rounding applies), but neither is
-    // planted with a seed — Mineral Pile is mined, Nimbus Bed is Aniimo-family dispatch. Both are
+    // planted with a seed; Mineral Pile is mined, Nimbus Bed is Aniimo-family dispatch. Both are
     // owned and Producing in `default_facility_counts`, so this is a real regression check, not
     // just an empty-by-construction assertion.
     let non_seed_grower_producing = plan.coin_items.iter().any(|s| {
@@ -732,7 +719,7 @@ fn test_find_coin_plan_infeasible_with_no_facilities() {
     }
     let items = load_all_data(data_dir).expect("Failed to load data");
     // `FacilityCounts::get_count` returns 1 for any facility not explicitly listed (a "default to
-    // owning one of everything" convenience for the CLI) — so genuine infeasibility requires
+    // owning one of everything" convenience for the CLI); so genuine infeasibility requires
     // listing every facility at 0 explicitly, not just passing an empty slice.
     let counts = FacilityCounts::from_pairs(&[
         ("Farmland", 0, 1),
@@ -767,12 +754,12 @@ fn test_find_coin_plan_never_produces_via_unowned_intermediate_facility() {
     // soy_sauce_tofu's only source of soy_sauce is Bouncy Brew Keg. Owning 0 of it must make
     // soy_sauce_tofu completely unproducible, even though every OTHER facility its chain touches
     // (Farmland for soybean, Carousel Mill for tofu, Claw Game Cooker for final assembly) is
-    // owned. Regression test: `solve_facility_allocation` used to skip adding an LP constraint
-    // entirely for any facility with 0 capacity, instead of constraining it to exactly 0 — which
-    // let the solver treat "you own none of this" as "unlimited supply of it" for any facility
-    // that only shows up as an INTERMEDIATE step in a chain (a root-facility check elsewhere
-    // already caught the case where the item's own directly-owning facility is unowned, which is
-    // why this bug was specific to intermediate facilities like Bouncy Brew Keg here).
+    // owned. `solve_facility_allocation` adds an LP constraint for every touched facility,
+    // including ones with 0 owned capacity, constraining them to exactly 0 rather than omitting
+    // the constraint; a facility with no constraint at all would let the solver treat "you own
+    // none of this" as "unlimited supply of it," which specifically matters for a facility that
+    // only shows up as an INTERMEDIATE step in a chain like Bouncy Brew Keg here (a root-facility
+    // check elsewhere already catches an unowned facility that directly owns the target item).
     let counts = FacilityCounts::from_pairs(&[
         ("Farmland", 20, 3),
         ("Woodland", 0, 1),
@@ -836,7 +823,7 @@ fn test_find_production_plan_bud_tickets_end_to_end() {
     }
     let items = load_all_data(data_dir).expect("Failed to load data");
     // advanced_soy_sauce_tofu (Claw Game Cooker: soy_sauce + tofu, kitchen_module:3) sells for
-    // Bud Tickets only — needs the same soy_sauce/tofu supply chain as the coins-only
+    // Bud Tickets only; needs the same soy_sauce/tofu supply chain as the coins-only
     // soy_sauce_tofu, so this doubles as a check that currency filtering happens without
     // otherwise touching the LP/chain-resolution logic.
     let counts = FacilityCounts::from_pairs(&[
@@ -875,10 +862,30 @@ fn test_find_production_plan_bud_tickets_end_to_end() {
     );
 }
 
-// Growing-environment coverage: a reported Discord bug had the calculator recommending 14
-// Woodland plots grow Pine when only 12 can physically receive "Adequate" light from a single
-// Sunlamp. These lock in the fix: an environment-gated item is capped by owned coverage, not just
-// by raw plot count.
+#[test]
+fn test_production_plan_reports_candidates_evaluated_and_trial_solves() {
+    let data_dir = Path::new("data");
+    if !data_dir.exists() {
+        return;
+    }
+    let items = load_all_data(data_dir).expect("Failed to load data");
+    let counts = FacilityCounts::from_pairs(&[("Farmland", 5, 1), ("Mineral Pile", 1, 1)]);
+    let plan = find_production_plan(&items, "coins", &counts, &ModuleLevels::default(), false)
+        .expect("plan should be feasible");
+
+    assert!(
+        plan.candidates_evaluated > 0,
+        "a feasible plan should have evaluated at least one candidate item"
+    );
+    assert!(
+        plan.trial_solves > 0,
+        "finding a plan always solves the facility-allocation LP at least once"
+    );
+}
+
+// Growing-environment coverage: an environment-gated item's rate is capped by owned building
+// coverage (e.g. a single Sunlamp lights "Adequate" for at most 12 Woodland plots), not just by
+// raw plot count.
 
 #[test]
 fn test_environment_gated_item_unavailable_with_zero_matching_buildings() {
@@ -888,7 +895,7 @@ fn test_environment_gated_item_unavailable_with_zero_matching_buildings() {
     }
     let items = load_all_data(data_dir).expect("Failed to load data");
     // Level 4 Woodland unlocks rubber/walnut/pine, all environment-gated (Scorching/Cool/Adequate
-    // respectively) — with genuinely zero environment buildings of any kind, none of them should
+    // respectively); with genuinely zero environment buildings of any kind, none of them should
     // ever be selected, regardless of how many Woodland plots are owned.
     let counts = FacilityCounts::from_pairs(&[
         ("Woodland", 14, 4),
@@ -913,7 +920,7 @@ fn test_environment_gated_item_unavailable_with_zero_matching_buildings() {
         "no environment building should be assigned when none are owned, got: {:?}",
         plan.environment_assignments
     );
-    // All 14 plots should still be productive (falls back to a non-gated item, e.g. lemon) —
+    // All 14 plots should still be productive (falls back to a non-gated item, e.g. lemon);
     // owning no environment buildings shouldn't strand the facility entirely.
     let total_producing: u32 = woodland_steps
         .iter()
@@ -930,9 +937,9 @@ fn test_environment_gated_item_capped_by_single_building_coverage() {
         return;
     }
     let items = load_all_data(data_dir).expect("Failed to load data");
-    // Exact reported scenario: 14 Woodland plots, but exactly 1 Sunlamp (Adequate) — its
-    // All-Woodland preset covers 12 plots, so Pine (Adequate) should cap at 12, with the
-    // remaining 2 plots falling back to a non-gated item.
+    // 14 Woodland plots, but exactly 1 Sunlamp (Adequate); a single Sunlamp's geometric coverage
+    // caps Woodland at 12 plots (see `crate::coverage`), so Pine (Adequate) should cap at 12, with
+    // the remaining 2 plots falling back to a non-gated item.
     let counts = FacilityCounts::from_pairs(&[
         ("Woodland", 14, 4),
         ("Heat Furnace", 0, 1),
@@ -988,7 +995,7 @@ fn test_environment_coverage_is_a_no_op_when_no_gated_item_is_unlocked() {
     // all (palm/coconut/maple_syrup, the first environment-gated Woodland items, need level 3).
     // The four Aniimo Material facilities (Dewy House/Starfall Hammock/Tidewhisper Sandcastle/
     // Grass Blossom Mat) are ALSO environment-gated now, and default to owning 1 each (unset here,
-    // same as any other unmentioned facility) — their level-1 items DO need an environment, so
+    // same as any other unmentioned facility); their level-1 items DO need an environment, so
     // they're explicitly zeroed out here to keep this test's actual premise ("nothing needs one")
     // true, rather than relying on the facility-count default.
     let counts = FacilityCounts::from_pairs(&[
@@ -1008,11 +1015,11 @@ fn test_environment_coverage_is_a_no_op_when_no_gated_item_is_unlocked() {
 }
 
 // Wood Blocks / Mineral Sand as full optimization targets (not just a passive byproduct of
-// whatever's optimal for coins) — a real chokepoint at high Homeland levels, per user feedback.
+// whatever's optimal for coins); a real chokepoint at high Homeland levels, per user feedback.
 // Targeting one dedicates Woodland/Mineral Pile to whichever item yields the most of that
 // resource per second (cost/production_time, since byproduct_yield always matches an item's
 // planting cost), exactly like Coins/Bud Tickets already dedicate facilities to the most
-// profitable item — just with byproduct amount standing in for profit as the LP's objective.
+// profitable item; just with byproduct amount standing in for profit as the LP's objective.
 
 #[test]
 fn test_wood_blocks_target_picks_the_best_byproduct_item() {
@@ -1023,7 +1030,7 @@ fn test_wood_blocks_target_picks_the_best_byproduct_item() {
     let items = load_all_data(data_dir).expect("Failed to load data");
     // Level 2 unlocks chestnut/bamboo/lemon/quick_lemon (quick_lemon excluded: no ecological
     // module). chestnut's byproduct rate (8/1125 ≈ 0.00711/sec) uniquely beats bamboo/lemon's
-    // (15/2250 ≈ 0.00667/sec) — no environment involved, no tie, so this is an unambiguous check
+    // (15/2250 ≈ 0.00667/sec); no environment involved, no tie, so this is an unambiguous check
     // that byproduct rate (not sell_value) drives the choice.
     let counts = FacilityCounts::from_pairs(&[
         ("Woodland", 10, 2),
@@ -1045,10 +1052,10 @@ fn test_wood_blocks_target_picks_the_best_byproduct_item() {
     assert_eq!(woodland_step.facility_count, 10);
     assert_eq!(woodland_step.status, PlanStepStatus::Producing);
 
-    // Every other owned facility has nothing to contribute to a Wood Blocks target — only
+    // Every other owned facility has nothing to contribute to a Wood Blocks target; only
     // Woodland produces this byproduct. (Environment buildings can legitimately show `Idle`
-    // rather than `NothingAvailable` here — see `PlanStep`'s environment-building branch in
-    // `find_production_plan` — so the real invariant is just "not producing".)
+    // rather than `NothingAvailable` here; see `PlanStep`'s environment-building branch in
+    // `find_production_plan`; so the real invariant is just "not producing".)
     for step in plan.coin_items.iter().filter(|s| s.facility != "Woodland") {
         assert_ne!(
             step.status,
@@ -1084,10 +1091,10 @@ fn test_wood_blocks_target_respects_environment_coverage() {
         return;
     }
     let items = load_all_data(data_dir).expect("Failed to load data");
-    // Same scenario as the reported Discord bug (14 Woodland, 1 Sunlamp), but targeting Wood
-    // Blocks instead of coins — pine is still the best byproduct producer at level 4 among the
-    // options actually coverable (Heat Furnace/Cooling Unit both owned 0), so it should still cap
-    // at exactly 12 plots, confirming the environment and byproduct-target features compose.
+    // Same 14 Woodland, 1 Sunlamp setup as above, but targeting Wood Blocks instead of coins; pine
+    // is still the best byproduct producer at level 4 among the options actually coverable (Heat
+    // Furnace/Cooling Unit both owned 0), so it should still cap at exactly 12 plots, confirming
+    // the environment and byproduct-target features compose.
     let counts = FacilityCounts::from_pairs(&[
         ("Woodland", 14, 4),
         ("Heat Furnace", 0, 1),
@@ -1155,8 +1162,8 @@ fn test_mineral_sand_target_picks_the_best_byproduct_item() {
     assert_eq!(mineral_step.item_name.as_deref(), Some("gem"));
     assert_eq!(mineral_step.facility_count, 5);
 
-    // (Environment buildings can legitimately show `Idle` rather than `NothingAvailable` here —
-    // see `PlanStep`'s environment-building branch in `find_production_plan` — so the real
+    // (Environment buildings can legitimately show `Idle` rather than `NothingAvailable` here;
+    // see `PlanStep`'s environment-building branch in `find_production_plan`, so the real
     // invariant is just "not producing".)
     for step in plan.coin_items.iter().filter(|s| s.facility != "Mineral Pile") {
         assert_ne!(
@@ -1205,11 +1212,10 @@ fn test_environment_coverage_uses_multiple_owned_buildings_when_one_is_not_enoug
         return;
     }
     let items = load_all_data(data_dir).expect("Failed to load data");
-    // Regression test for a real user report, updated for the exact-geometry packing solver: a
-    // single Cooling Unit's true capacity around Farmland is 32 (confirmed against the game and
-    // locked in by `coverage::tests::farmland_alone_matches_hand_verified_geometry`) — so 40
-    // Farmland (ginseng needs Cool) genuinely needs 2 owned Cooling Units (up to 64 combined),
-    // not 1 (32 alone falls 8 short), with a 3rd owned unit correctly left unconfigured.
+    // A single Cooling Unit's true capacity around Farmland is 32 (see
+    // `coverage::tests::farmland_alone_matches_hand_verified_geometry`); so 40 Farmland (ginseng
+    // needs Cool) genuinely needs 2 owned Cooling Units (up to 64 combined), not 1 (32 alone falls
+    // 8 short), with a 3rd owned unit correctly left unconfigured.
     let counts = FacilityCounts::from_pairs(&[
         ("Farmland", 40, 5),
         ("Cooling Unit", 3, 1),
@@ -1273,14 +1279,12 @@ fn test_processor_facility_dedicates_a_separate_unit_to_its_own_intermediate_ste
         return;
     }
     let items = load_all_data(data_dir).expect("Failed to load data");
-    // Regression test for a real user report: premium_lemon_incense (Phonolfactory Table) needs
-    // lemon_incense + aromathyst, but lemon_incense is ITSELF made at Phonolfactory Table from
-    // lemon — the same facility type has to make lemon_incense before it can combine it into
-    // premium_lemon_incense. A physical unit is "set and left" on ONE recipe (never switched or
-    // fractionally time-shared), so this genuinely needs TWO dedicated units: one continuously
-    // making lemon_incense, one continuously combining it into premium_lemon_incense. The plan
-    // used to model this as a single unit "also making X here first", which isn't something a
-    // player can actually execute — it should instead show up as two separate facility rows.
+    // premium_lemon_incense (Phonolfactory Table) needs lemon_incense + aromathyst, but
+    // lemon_incense is ITSELF made at Phonolfactory Table from lemon; the same facility type has
+    // to make lemon_incense before it can combine it into premium_lemon_incense. A physical unit
+    // is "set and left" on ONE recipe (never switched or fractionally time-shared), so this
+    // genuinely needs TWO dedicated units: one continuously making lemon_incense, one continuously
+    // combining it into premium_lemon_incense; each should show up as its own facility row.
     let counts = FacilityCounts::from_pairs(&[
         ("Woodland", 2, 4),
         ("Dewy House", 1, 1),
@@ -1369,12 +1373,11 @@ fn test_mixed_level_tiers_split_capacity_by_what_each_tier_can_actually_run() {
     }
     let items = load_all_data(data_dir).expect("Failed to load data");
     // A player commonly upgrades some but not all of their plots of one facility type. Own 5
-    // Farmland at level 3 and 4 more upgraded to level 5 — ginseng (level 5, needs Cool) can only
+    // Farmland at level 3 and 4 more upgraded to level 5; ginseng (level 5, needs Cool) can only
     // ever run on the 4 level-5 plots, while soybean (level 3, no environment) is eligible on all
-    // 9 (a higher-level plot can always run a lower-level recipe too). Regression test for the
-    // exact scenario confirmed live in the browser: with only 5+4=9 total reported by the OLD
-    // level-agnostic `get_count`, a level-5 item could wrongly be assigned rate implying up to 9
-    // dedicated plots, when only 4 physically qualify.
+    // 9 (a higher-level plot can always run a lower-level recipe too). A level-agnostic total
+    // count would wrongly let a level-5 item's rate imply up to 9 dedicated plots, when only 4
+    // physically qualify.
     let mut counts = FacilityCounts::new();
     counts.add_tier("Farmland", 5, 3);
     counts.add_tier("Farmland", 4, 5);
@@ -1407,7 +1410,7 @@ fn test_mixed_level_tiers_split_capacity_by_what_each_tier_can_actually_run() {
 // achievable Wood Blocks/Mineral Sand rate first, then spend whatever facility capacity is left
 // over on profit. This scenario is deliberately set up so growing walnut/chestnut/maple_syrup for
 // caramel_nut_chips (the coin-optimal use of Woodland) yields LESS total Wood Blocks than
-// dedicating Woodland to walnut alone would — a real conflict between profit and byproduct output.
+// dedicating Woodland to walnut alone would; a real conflict between profit and byproduct output.
 #[test]
 fn test_prioritize_byproducts_forces_max_wood_blocks_rate_at_a_real_coin_cost() {
     let data_dir = Path::new("data");
@@ -1460,7 +1463,7 @@ fn test_prioritize_byproducts_forces_max_wood_blocks_rate_at_a_real_coin_cost() 
 }
 
 // When `currency` is itself already a byproduct target, prioritizing is a no-op (the whole plan
-// already IS byproduct maximization) — confirms the gate in `find_production_plan` correctly
+// already IS byproduct maximization); confirms the gate in `find_production_plan` correctly
 // skips computing/applying floors in that case rather than redundantly re-solving.
 #[test]
 fn test_prioritize_byproducts_is_a_no_op_when_targeting_a_byproduct_directly() {
@@ -1477,24 +1480,23 @@ fn test_prioritize_byproducts_is_a_no_op_when_targeting_a_byproduct_directly() {
     assert_eq!(plan_a.rate_per_second, plan_b.rate_per_second);
 }
 
-/// Regression test for a real hang, found live: a late-game facility config with large owned
-/// counts (7-9+) spread across many DIFFERENT environment-gated facility types simultaneously
-/// (Farmland/Woodland/Starfall Hammock/Tidewhisper Sandcastle all competing for the same Cooling
-/// Unit's "Cool" coverage) took 6-9+ seconds — confirmed via direct profiling to be entirely
-/// `crate::coverage::solve_one_building_layout`'s single-building binary ILP, NOT the
-/// stranded-chain exclusion loop in `find_production_plan` (that loop itself resolved in ~1ms).
+/// A late-game facility config with large owned counts (7-9+) spread across many different
+/// environment-gated facility types simultaneously (Farmland/Woodland/Starfall Hammock/
+/// Tidewhisper Sandcastle all competing for the same Cooling Unit's "Cool" coverage) can take
+/// several seconds if `crate::coverage::solve_one_building_layout`'s single-building binary ILP
+/// isn't kept fast; the stranded-chain exclusion loop in `find_production_plan` itself resolves
+/// in ~1ms regardless.
 ///
 /// Root cause: every candidate position of one facility type carries the exact same per-plot
 /// weight, so a moderately tight per-type ownership cap (e.g. 5 Farmland spots out of ~30
 /// candidate positions) hands `microlp`'s branch & bound a huge number of objectively-tied ways to
-/// choose "which k of these", and it was spending almost all its time PROVING optimality rather
-/// than finding it — the true optimum was consistently found within the first ~10ms. Fixed by (1)
-/// sorting `weighted` before it's fed into `solve_one_building_layout` so variable-creation order
-/// (and thus B&B performance) is deterministic instead of randomized by `HashMap` iteration order
-/// (the same problem took anywhere from ~1s to ~9s across repeated runs before this), and (2) a
-/// bounded time limit on each single-building solve with a fractional-solution safety check (see
-/// `solve_one_building_layout`'s doc comment) so a slow instance degrades to "skip this round"
-/// instead of hanging.
+/// choose "which k of these", spending almost all its time PROVING optimality rather than finding
+/// it; the true optimum is typically found within the first ~10ms. Addressed by (1) sorting
+/// `weighted` before it's fed into `solve_one_building_layout` so variable-creation order (and
+/// thus B&B performance) is deterministic instead of randomized by `HashMap` iteration order, and
+/// (2) a bounded time limit on each single-building solve with a fractional-solution safety check
+/// (see `solve_one_building_layout`'s doc comment) so a slow instance degrades to "skip this
+/// round" instead of hanging.
 ///
 /// Runs on a background thread with a generous timeout so a regression fails loudly instead of
 /// hanging the whole test suite (mirrors `crate::coverage::regression_tests`' own pattern).
@@ -1552,13 +1554,11 @@ fn test_single_dominant_processor_item_claims_every_owned_unit() {
         return;
     }
     let items = load_all_data(data_dir).expect("Failed to load data");
-    // Regression test for a real bug: `build_processor_usage` divided an item's own
-    // "how many whole units does this rate need" quantity by the facility's total owned count a
-    // SECOND time, turning it into a fraction of total capacity before ceiling it. That's harmless
-    // for a trickle contributor (its fraction stays under 1 either way) but wrong for anything
-    // needing MORE than one unit: with gemstone_dust the only profitable Crafting Table item and
-    // plenty of raw gem supply, it should dominate and claim all 5 owned Crafting Tables, not just
-    // 1 (which the bug reported: fraction = 5/5 = 1.0, ceil() = 1).
+    // A single item's whole-unit need (`units_needed = utilization * rate`, see
+    // `build_processor_usage`'s doc comment) must be reported directly, not re-divided by the
+    // facility's total owned count into a fraction of capacity before ceiling it; with
+    // gemstone_dust the only profitable Crafting Table item and plenty of raw gem supply, it
+    // should dominate and claim all 5 owned Crafting Tables, not just 1.
     let counts = FacilityCounts::from_pairs(&[
         ("Mineral Pile", 1000, 4),
         ("Crafting Table", 5, 4),
@@ -1603,15 +1603,14 @@ fn test_environment_coverage_choice_does_not_settle_for_a_worse_joint_split() {
         mineral_detector: 4,
         crafting_module: 4,
     };
-    // Regression test for a real user report: with only 1 Sunlamp but 3 Cooling Units, grape
-    // (Farmland, needs Adequate) priced high enough on its own static per-plot economics to claim
-    // the single Sunlamp's coverage, dragging pine (Woodland, ALSO Adequate) into competing for
-    // that same tiny pool — even though ginseng (Farmland, needs Cool) and pine sharing the
-    // Cooling Units' 3x larger pool instead genuinely produces more (confirmed by hand: 45.72
-    // coins/sec vs. 43.91 with grape, an ~4% real gap using nothing but candidates already
-    // available in the unrestricted solve). The environment-coverage-CHOICE exclusion pass in
-    // `find_production_plan` should catch this and pick the genuinely better split on its own,
-    // without needing grape manually excluded.
+    // With only 1 Sunlamp but 3 Cooling Units, grape (Farmland, needs Adequate) prices high enough
+    // on its own static per-plot economics to claim the single Sunlamp's coverage, dragging pine
+    // (Woodland, ALSO Adequate) into competing for that same tiny pool; even though ginseng
+    // (Farmland, needs Cool) and pine sharing the Cooling Units' 3x larger pool instead genuinely
+    // produces more (45.72 coins/sec vs. 43.91 with grape, an ~4% real gap using nothing but
+    // candidates already available in the unrestricted solve). The environment-coverage-CHOICE
+    // exclusion pass in `find_production_plan` should catch this and pick the genuinely better
+    // split on its own, without needing grape manually excluded.
     let counts = FacilityCounts::from_pairs(&[
         ("Farmland", 28, 5),
         ("Woodland", 14, 4),
@@ -1647,7 +1646,7 @@ fn test_environment_coverage_choice_does_not_settle_for_a_worse_joint_split() {
         plan.coin_items.iter().filter(|s| s.facility == "Farmland").collect::<Vec<_>>()
     );
     // The exact optimum found by hand (excluding grape manually and taking the best of what's
-    // left) — the automatic exclusion pass should reach the same total, not just something better
+    // left); the automatic exclusion pass should reach the same total, not just something better
     // than the grape-including baseline.
     assert!(
         (plan.rate_per_second - 45.71963636363636).abs() < 1e-6,

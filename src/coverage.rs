@@ -1,35 +1,28 @@
-//! Real 2D geometric packing for environment-building coverage (Heat Furnace/Cooling
-//! Unit/Sunlamp) — replaces the old 3-fixed-preset approximation (`LAYOUT_PRESETS`) with an exact
-//! solve over the game's actual placement mechanic.
+//! Exact 2D geometric packing for environment-building coverage (Heat Furnace/Cooling Unit/
+//! Sunlamp).
 //!
-//! ## Confirmed geometry (verified directly against the game, including two screenshots pinning
-//! down the exact coverage rule)
+//! ## Coverage geometry
 //! - Every environment building is a 2x2 footprint ([`BUILDING_SIZE`]).
 //! - It radiates coverage as a square of side `2 * `[`COVERAGE_RADIUS`] centered on its own exact
 //!   center (not its corner).
-//! - A facility is covered only if its own footprint overlaps that coverage square by a REAL
-//!   area — a corner-only touch is confirmed NOT enough (screenshot showed "Recommended", not
-//!   "Recommendations met"), while a small nudge producing real overlap WAS enough. Since every
-//!   footprint is snapped to the quarter-grid ([`GRID_STEP`]), any nonzero overlap between two
-//!   quarter-grid-aligned rectangles is automatically at least 0.25x0.25 — so this rule falls out
-//!   for free from only ever generating candidate positions ON that grid; no separate minimum-area
-//!   check is needed.
+//! - A facility is covered only if its own footprint overlaps that coverage square by a real
+//!   area; a corner-only touch is not enough. Since every footprint is snapped to the
+//!   quarter-grid ([`GRID_STEP`]), any nonzero overlap between two quarter-grid-aligned rectangles
+//!   is automatically at least 0.25x0.25, so this rule falls out for free from only ever
+//!   generating candidate positions on that grid; no separate minimum-area check is needed.
 //! - Facilities can't overlap the building itself or each other.
-//! - Facility footprints (also confirmed): Farmland/Dewy House 2x2, Woodland 4x4, Starfall
-//!   Hammock/Tidewhisper Sandcastle/Grass Blossom Mat 5x5 — see [`ENVIRONMENT_GATED_FACILITIES`].
+//! - Facility footprints: Farmland/Dewy House 2x2, Woodland 4x4, Starfall Hammock/Tidewhisper
+//!   Sandcastle/Grass Blossom Mat 5x5; see [`ENVIRONMENT_GATED_FACILITIES`].
 //!
-//! ## Candidate generation is intentionally a bounded heuristic, not exhaustive
+//! ## Candidate generation is a bounded heuristic, not exhaustive
 //!
 //! Sweeping every quarter-grid position for every facility type would generate thousands of
-//! candidates per type — intractable for the MILP branch & bound this feeds into (see
-//! `crate::optimizer::solve_facility_allocation`). Instead, [`candidate_positions`] reuses the
-//! same "find the single best quarter-grid alignment" search that was validated (by hand, via a
-//! throwaway script) against the known ground truth — Woodland alone comes out to exactly 12,
-//! matching what the community already found; Farmland alone comes out to 32, revealing the
-//! community's "24" was an under-optimized layout, not a hard cap — plus a handful of half-space
-//! variants (restricting that same search to one half of the region, split through the building's
-//! center) so the ILP has enough raw material to reconstruct "Hybrid"-style mixed layouts when two
-//! or more types share one building's coverage. Candidate **generation** is this bounded, tuned
+//! candidates per type; intractable for the MILP branch & bound this feeds into (see
+//! `crate::optimizer::solve_facility_allocation`). Instead, [`candidate_positions`] finds the
+//! single best quarter-grid alignment for each facility type on its own, plus a handful of
+//! half-space variants (restricting that same search to one half of the region, split through the
+//! building's center) so the ILP has enough raw material to reconstruct mixed layouts when two or
+//! more types share one building's coverage. Candidate **generation** is this bounded, tuned
 //! subset; candidate **selection** among them (which is what actually decides how many of each
 //! type get used) is exact integer optimization.
 
@@ -37,7 +30,7 @@ use std::collections::HashMap;
 
 const EPS: f64 = 1e-6;
 
-/// Environment building footprint (Heat Furnace/Cooling Unit/Sunlamp — all identical size).
+/// Environment building footprint (Heat Furnace/Cooling Unit/Sunlamp; all identical size).
 pub const BUILDING_SIZE: f64 = 2.0;
 /// Coverage radiates this far from the building's exact center in every direction, i.e. total
 /// coverage span is `2 * COVERAGE_RADIUS` (a 9x9 square).
@@ -74,8 +67,8 @@ impl Rect {
         Rect { x1: x, y1: y, x2: x + w, y2: y + w }
     }
 
-    /// Real (positive-area) overlap — a shared edge or corner alone does not count. See this
-    /// module's doc comment for why that matches the confirmed in-game rule exactly.
+    /// Real (positive-area) overlap; a shared edge or corner alone does not count. See this
+    /// module's doc comment for the coverage rule this implements.
     fn overlaps(&self, o: &Rect) -> bool {
         self.x1 < o.x2 - EPS && self.x2 > o.x1 + EPS && self.y1 < o.y2 - EPS && self.y2 > o.y1 + EPS
     }
@@ -91,8 +84,8 @@ fn coverage_rect() -> Rect {
 }
 
 /// One candidate placement: a facility of `facility` type, anchored at `(x, y)` (its
-/// lower-left corner), footprint side `size`. Used both as a packing-ILP candidate and — once
-/// selected — as the exact position rendered in the frontend's layout diagram, so this is real
+/// lower-left corner), footprint side `size`. Used both as a packing-ILP candidate and, once
+/// selected, as the exact position rendered in the frontend's layout diagram, so this is real
 /// game-grid geometry, not a display-only abstraction.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Placement {
@@ -108,7 +101,7 @@ impl Placement {
     }
 }
 
-/// Which half of the region a candidate's footprint must stay within — used only to generate
+/// Which half of the region a candidate's footprint must stay within; used only to generate
 /// extra candidates (see this module's doc comment); the ILP is free to ignore them.
 #[derive(Debug, Clone, Copy)]
 enum HalfSpace {
@@ -183,7 +176,7 @@ fn best_grid_positions(size: f64, half: Option<HalfSpace>) -> Vec<(f64, f64)> {
 
 /// Every candidate position worth offering the packing solver for one facility type: its own
 /// best full grid, plus its best grids restricted to each half of the region (so the solver can
-/// reconstruct "Hybrid"-style splits when sharing coverage with another type) — deduplicated.
+/// reconstruct "Hybrid"-style splits when sharing coverage with another type); deduplicated.
 pub fn candidate_positions(size: f64) -> Vec<(f64, f64)> {
     let split = BUILDING_SIZE / 2.0; // the building's own center coordinate on each axis
     let mut all: Vec<(f64, f64)> = best_grid_positions(size, None);
@@ -202,7 +195,7 @@ pub fn candidate_positions(size: f64) -> Vec<(f64, f64)> {
     all
 }
 
-/// Every candidate [`Placement`] for one facility type — see [`candidate_positions`].
+/// Every candidate [`Placement`] for one facility type; see [`candidate_positions`].
 pub fn candidate_placements(facility: &str, size: f64) -> Vec<Placement> {
     candidate_positions(size)
         .into_iter()
@@ -210,8 +203,8 @@ pub fn candidate_placements(facility: &str, size: f64) -> Vec<Placement> {
         .collect()
 }
 
-/// `true` if two placements' footprints overlap by positive area (so at most one of them —
-/// across all K identical buildings sharing this coverage — can occupy that overlap at once).
+/// `true` if two placements' footprints overlap by positive area (so at most one of them,
+/// across all K identical buildings sharing this coverage, can occupy that overlap at once).
 pub fn placements_overlap(a: &Placement, b: &Placement) -> bool {
     a.rect().overlaps(&b.rect())
 }
@@ -228,19 +221,15 @@ pub struct PackingSolution {
 
 /// Adds the non-overlap constraints for a set of placement variables, bounding how many can cover
 /// any single quarter-grid cell at once by `capacity`. This is a cell-based set-packing
-/// formulation (standard for "no two selected rectangles overlap"), NOT naive pairwise
-/// `var_i + var_j <= capacity` constraints — pairwise gives an extremely loose LP relaxation for
-/// this kind of problem (confirmed empirically: with ~176 candidates it made microlp's branch &
-/// bound run over 60s), whereas bounding how many placements can cover each individual cell is
-/// both far fewer constraints AND a much tighter relaxation, since it's the same structure as
+/// formulation (standard for "no two selected rectangles overlap"), not naive pairwise
+/// `var_i + var_j <= capacity` constraints; pairwise gives an extremely loose LP relaxation for
+/// this kind of problem, whereas bounding how many placements can cover each individual cell is
+/// both far fewer constraints and a much tighter relaxation, since it's the same structure as
 /// classical interval scheduling.
 ///
-/// `capacity` must be a fixed number, not itself a decision variable — an earlier version of this
-/// module also supported a variable capacity (for splitting one building type's owned count
-/// across modes within a single combined ILP), but that formulation hung at moderate scale
-/// (confirmed: ~10 owned buildings was enough to never return). See
-/// `crate::coverage::split_owned_across_modes`'s doc comment for the fixed-capacity-only
-/// replacement.
+/// `capacity` must be a fixed number, not itself a decision variable; a variable capacity (for
+/// splitting one building type's owned count across modes within a single combined ILP) hangs at
+/// moderate scale.
 fn add_cell_conflict_constraints(problem: &mut microlp::Problem, vars: &[(Placement, microlp::Variable)], capacity: u32) {
     let (mut min_x, mut max_x, mut min_y, mut max_y) =
         (f64::INFINITY, f64::NEG_INFINITY, f64::INFINITY, f64::NEG_INFINITY);
@@ -281,7 +270,7 @@ fn add_cell_conflict_constraints(problem: &mut microlp::Problem, vars: &[(Placem
 /// Solves the exact packing ILP for `building_count` identical, independently-placed environment
 /// buildings sharing one mode: which candidate placements (see [`candidate_placements`]) to use,
 /// maximizing `Σ weight(type) * count`, such that no two selected placements' footprints overlap
-/// by more than `building_count` (the K-buildings-share-one-candidate-set simplification — see
+/// by more than `building_count` (the K-buildings-share-one-candidate-set simplification; see
 /// `crate::optimizer::solve_facility_allocation`'s doc comment for why this is exact, not an
 /// approximation, given the buildings don't interact with each other).
 ///
@@ -333,20 +322,18 @@ pub fn solve_packing(weighted_types: &[(&str, f64)], building_count: u32) -> Opt
 /// Solves ONE building's own layout (a small, fast independent-set-style ILP: which candidate
 /// placements can coexist within a single building's coverage without overlapping, maximizing
 /// `Σ weight(type)`), considering only candidates whose facility type still has capacity left in
-/// `remaining_owned`, and capping each facility type's TOTAL placements used here at that
+/// `remaining_owned`, and capping each facility type's total placements used here at that
 /// remaining count. Without that cap, candidate positions of the same small footprint (e.g. Dewy
-/// House, 2x2) can tile several non-overlapping spots within one building's coverage zone — the
-/// cell-conflict constraint alone only forbids two placements from covering the SAME cell, so with
-/// nothing else capping it, a facility type with positive weight and only 1 real unit owned would
-/// still get every one of those non-overlapping spots filled (a real bug found live: 1 owned Dewy
-/// House rendering as ~9 in the diagram). Binary variables, capacity 1 per cell — this is the
-/// well-behaved shape confirmed fast even with all 6 facility types competing AND a tight
-/// ownership cap (see `packing_solve_is_fast_enough_for_the_worst_realistic_case` and
+/// House, 2x2) can tile several non-overlapping spots within one building's coverage zone; the
+/// cell-conflict constraint alone only forbids two placements from covering the same cell, so
+/// without an explicit per-type cap, a facility type with positive weight but only 1 owned unit
+/// would still get every one of those non-overlapping spots filled in the layout. Binary
+/// variables, capacity 1 per cell; this stays fast even with all 6 facility types competing and a
+/// tight ownership cap (see `packing_solve_is_fast_enough_for_the_worst_realistic_case` and
 /// `building_packing_stays_fast_at_realistic_owned_counts`); unlike solving many buildings' shared
 /// capacity jointly (see `solve_building_packing`'s doc comment), a single building's placement
-/// choice has no MULTI-building ownership-cap trade-off baked into the ILP, which is what made the
-/// earlier joint formulation hang — one extra linear cap constraint on an already-tiny,
-/// single-building problem stays fast.
+/// choice has no multi-building ownership-cap trade-off baked into the ILP, so one extra linear
+/// cap constraint on an already-tiny, single-building problem stays fast.
 fn solve_one_building_layout<'a>(
     weighted_types: &[(&'a str, f64)],
     remaining_owned: &HashMap<&'a str, u32>,
@@ -383,22 +370,21 @@ fn solve_one_building_layout<'a>(
     }
 
     // Bounds this single-building solve's worst case: with several facility types competing for
-    // one building's coverage under a moderately tight per-type ownership cap, the candidates all
-    // sharing one type's identical weight gives `microlp`'s branch & bound a huge number of
-    // objectively-tied ways to pick "which k of these non-overlapping spots" — a real instance
-    // confirmed live (4 types, 104 binary vars, realistic owned counts) took over a second to
-    // finish PROVING optimality even though it found that same optimal value within the first
-    // ~10ms (see `regression_tests::single_building_layout_time_limit_still_finds_true_optimum`).
-    // A modest deadline keeps this bounded without sacrificing quality in the vast majority of
-    // cases: this crate's B&B always evaluates a full incumbent before working on later ones, so
-    // an incumbent is typically found almost immediately, with the remaining time spent trying
-    // (usually in vain) to beat it.
+    // one building's coverage under a moderately tight per-type ownership cap, candidates sharing
+    // one type's identical weight give `microlp`'s branch & bound a huge number of objectively-tied
+    // ways to pick "which k of these non-overlapping spots"; proving optimality can take much
+    // longer than finding the optimal value in the first place (see
+    // `regression_tests::single_building_layout_time_limit_still_finds_true_optimum`). A modest
+    // deadline keeps this bounded without sacrificing quality in the vast majority of cases: this
+    // crate's B&B always evaluates a full incumbent before working on later ones, so an incumbent
+    // is typically found almost immediately, with the remaining time spent trying (usually in
+    // vain) to beat it.
     problem.set_time_limit(std::time::Duration::from_millis(300));
     let Ok(solution) = problem.solve() else { return (Vec::new(), 0.0) };
 
     // If the deadline hit before the solver ever found an integral incumbent (only realistically
     // possible on a slow device/debug build, or an even harder instance than any seen so far),
-    // `solution` reflects an LP relaxation snapshot, not a real 0/1 assignment — thresholding
+    // `solution` reflects an LP relaxation snapshot, not a real 0/1 assignment; thresholding
     // fractional values at 0.5 could select overlapping placements or exceed a facility's
     // ownership cap. Treat that the same as "nothing worth covering this round" (the same
     // safe/conservative fallback `solve_building_packing`'s caller already uses when a mode's best
@@ -418,9 +404,9 @@ fn solve_one_building_layout<'a>(
 }
 
 /// Solves environment-building coverage for ONE building type's `owned` units, jointly across ALL
-/// its modes (they share the same physical buildings — e.g. a Cooling Unit's Cool and Freeze both
+/// its modes (they share the same physical buildings; e.g. a Cooling Unit's Cool and Freeze both
 /// compete for the same units). `weighted` lists every `(facility_type, mode, weight)` combo with
-/// at least one candidate item, where `weight` is that combo's own per-plot value — independent of
+/// at least one candidate item, where `weight` is that combo's own per-plot value; independent of
 /// any solved item rate (see below for why). `facility_owned` is how many of each facility type
 /// the player actually owns (shared across every mode, since a physical plot can only serve one
 /// mode's crop at a time).
@@ -428,32 +414,30 @@ fn solve_one_building_layout<'a>(
 /// Assigns the `owned` buildings ONE AT A TIME: for each, tries every active mode's best possible
 /// single-building layout (see [`solve_one_building_layout`]) against whatever facility capacity
 /// is still unclaimed, keeps whichever mode scores highest for that specific building, and
-/// deducts its usage before moving to the next building. This sequential-greedy design replaced
-/// TWO earlier, both-abandoned designs:
+/// deducts its usage before moving to the next building. Two alternative designs were ruled out:
 /// 1. One combined MILP mixing this packing with the continuous item-rate LP
-///    (`crate::optimizer::solve_facility_allocation`) — empirically hangs (a scenario with only
-///    ~50 continuous + ~120 integer variables never returned in 20+ seconds).
+///    (`crate::optimizer::solve_facility_allocation`); hangs even at modest scale (~50 continuous
+///    plus ~120 integer variables).
 /// 2. A single joint ILP across all `owned` buildings at once (one variable per candidate
-///    placement bounded `[0, owned]`, plus a shared facility-ownership-cap constraint) — still
-///    hangs even fully decoupled from the item-rate LP, once the ownership cap is tight relative
-///    to what geometry alone could pack (confirmed: hangs at `owned` as low as 10 with a
-///    `facility_owned` around 100 — a classic NP-hard packing+knapsack branch-and-bound cliff, not
-///    a gradual slowdown, since a *looser* cap of 1000 stayed fast at the same `owned`).
+///    placement bounded `[0, owned]`, plus a shared facility-ownership-cap constraint); still
+///    hangs once fully decoupled from the item-rate LP, whenever the ownership cap is tight
+///    relative to what geometry alone could pack. This is a classic NP-hard packing+knapsack
+///    branch-and-bound cliff, not a gradual slowdown: a looser cap stays fast at the same `owned`.
 ///
 /// Solving one binary-variable, capacity-1 building at a time sidesteps that cliff entirely: each
 /// individual solve has no ownership trade-off encoded in the ILP (exhausted types are simply
 /// excluded from the candidate set), so every one of the `owned` solves stays in the same fast,
 /// well-behaved regime as a lone building. The cost is trading true joint optimality (across
-/// buildings AND modes AND facility types simultaneously) for a sequential greedy approximation —
+/// buildings AND modes AND facility types simultaneously) for a sequential greedy approximation,
 /// the same kind of accepted trade `find_production_plan`'s own stranded-chain exclusion loop
 /// already makes elsewhere in this codebase, and unavoidable here since the exact joint problem is
 /// genuinely intractable at realistic scale.
 ///
 /// Returns `(mode_counts, placements, layouts)`:
-/// - `mode_counts` keyed by `(building, mode)` — how many owned units ended up running that mode.
-/// - `placements` keyed by `mode` — every used candidate placement, aggregated with its count
+/// - `mode_counts` keyed by `(building, mode)`; how many owned units ended up running that mode.
+/// - `placements` keyed by `mode`; every used candidate placement, aggregated with its count
 ///   (feeds `crate::optimizer::solve_facility_allocation`'s `coverage_bounds`).
-/// - `layouts` keyed by `mode` — one entry per building instance assigned to that mode, each a
+/// - `layouts` keyed by `mode`; one entry per building instance assigned to that mode, each a
 ///   concrete non-overlapping list of placements (feeds the frontend's per-building diagram).
 pub fn solve_building_packing<'a>(
     building: &'a str,
@@ -525,7 +509,7 @@ mod tests {
 
     #[test]
     fn building_packing_with_multiple_modes_is_fast_and_correct() {
-        // Cooling Unit sharing Cool + Freeze across 4 candidate facility types — mirrors a
+        // Cooling Unit sharing Cool + Freeze across 4 candidate facility types; mirrors a
         // realistic worst case from `crate::optimizer::solve_facility_allocation`'s decoupled
         // packing step. Confirms both speed (this hung for 20+ seconds when it was still combined
         // with the continuous item-rate LP in one MILP) and that mode capacity is respected.
@@ -584,7 +568,7 @@ mod tests {
         assert_eq!(cool_layouts.len() as u32, owned, "expected one layout per building instance");
 
         // Aggregate totals must match exactly: the per-building layouts are a partition of the
-        // aggregate `placements`, not an approximation — nothing gained or lost when summing them.
+        // aggregate `placements`, not an approximation; nothing gained or lost when summing them.
         let mut recombined: Vec<(Placement, u32)> = Vec::new();
         for building in cool_layouts {
             for placement in building {
@@ -615,8 +599,7 @@ mod tests {
 
     #[test]
     fn farmland_alone_matches_hand_verified_geometry() {
-        // Cross-check against the throwaway JS script's result during planning: Farmland's true
-        // max around one building is 32, not the community's previously assumed 24.
+        // Farmland's true max coverage around one building is 32 positions.
         let positions = candidate_positions(2.0);
         // best_grid_positions(None) alone (the unrestricted full grid) should already reach 32;
         // the half-space variants only ADD candidates, never remove them, so the full pool must
@@ -629,7 +612,7 @@ mod tests {
     }
 
     #[test]
-    fn woodland_alone_matches_known_community_number() {
+    fn woodland_alone_matches_expected_max() {
         let positions = best_grid_positions(4.0, None);
         assert_eq!(positions.len(), 12, "Woodland's unrestricted best grid should be exactly 12");
     }
@@ -637,8 +620,7 @@ mod tests {
     #[test]
     fn packing_solve_is_fast_enough_for_the_worst_realistic_case() {
         // Worst case: all 6 environment-gated types simultaneously profitable and needing the
-        // same mode, with a handful of owned buildings — gates whether the ILP approach from the
-        // plan is viable before wiring it into the production optimizer.
+        // same mode, with a handful of owned buildings.
         let weighted_types: Vec<(&str, f64)> = ENVIRONMENT_GATED_FACILITIES
             .iter()
             .enumerate()
@@ -681,16 +663,14 @@ mod tests {
 mod regression_tests {
     use super::*;
 
-    /// Regression test for a real hang, found live ("when I click calculate, it simply never
-    /// finishes"): a joint ILP across every owned building's shared capacity AND a facility
-    /// ownership cap is a packing+knapsack combinatorial cliff — confirmed to hang once `owned`
-    /// reached ~10 with a `facility_owned` around 100, even though the SAME shape at owned=1..8
-    /// solved in ~150-190ms each, and a much LOOSER cap of 1000 stayed fast at any owned count
-    /// tried (the cap only bites, combinatorially, once it's tight enough to force real
-    /// trade-offs). `solve_building_packing` was rewritten to assign buildings one at a time
-    /// (`solve_one_building_layout`, always a fast capacity-1 binary ILP) specifically to sidestep
-    /// this cliff. Runs on a background thread with a generous timeout so a regression fails
-    /// loudly instead of hanging the whole test suite.
+    /// A joint ILP across every owned building's shared capacity AND a facility ownership cap is a
+    /// packing+knapsack combinatorial cliff: it hangs once `owned` reaches ~10 with a
+    /// `facility_owned` around 100, even though the same shape at owned=1..8 solves in ~150-190ms
+    /// each, and a much looser cap of 1000 stays fast at any owned count (the cap only bites,
+    /// combinatorially, once it's tight enough to force real trade-offs). `solve_building_packing`
+    /// assigns buildings one at a time (`solve_one_building_layout`, always a fast capacity-1
+    /// binary ILP) to sidestep this cliff. Runs on a background thread with a generous timeout so
+    /// a regression fails loudly instead of hanging the whole test suite.
     #[test]
     fn building_packing_stays_fast_at_realistic_owned_counts() {
         let (tx, rx) = std::sync::mpsc::channel();
@@ -727,7 +707,7 @@ mod regression_tests {
     }
 
     /// Same scenario but with a much larger owned count and a tighter facility cap, well beyond
-    /// what any real player is likely to reach — guards against the cliff reappearing at scale
+    /// what any real player is likely to reach; guards against the cliff reappearing at scale
     /// now that each individual building solve is O(1) work, not the whole batch's.
     #[test]
     fn building_packing_stays_fast_at_large_owned_count() {

@@ -306,7 +306,7 @@ struct ProductionRequirements {
 }
 
 /// Resolves a raw material name to the actual item that would supply it, preferring the quick_
-/// variant when it exists and is usable — same substitution rule used everywhere else raw
+/// variant when it exists and is usable; same substitution rule used everywhere else raw
 /// material names are resolved. Keys the item map by owned `String` since that's what
 /// `calculate_efficiencies` and the resource-demand functions below use.
 fn resolve_raw_material<'a>(
@@ -329,18 +329,18 @@ fn resolve_raw_material<'a>(
     item_map.get(name).copied()
 }
 
-/// Walks `item`'s full ingredient tree, accumulating — per FACILITY touched anywhere in the
-/// tree, including `item`'s own facility — total *utilization*: batches/sec of whatever runs
+/// Walks `item`'s full ingredient tree, accumulating; per FACILITY touched anywhere in the
+/// tree, including `item`'s own facility; total *utilization*: batches/sec of whatever runs
 /// there, weighted by that item's own `production_time`, required per one batch/sec of the
 /// tree's root. Utilization (a dimensionless "fraction of one facility's continuous operation")
 /// is what makes sharing correct in every shape it comes in, because it's always additive:
 ///
-/// - The same item needed via two different branches — soy_sauce_tofu needs both soy_sauce
+/// - The same item needed via two different branches; soy_sauce_tofu needs both soy_sauce
 ///   (Bouncy Brew Keg) and tofu (Carousel Mill), and both independently need soybean from the
 ///   same Farmland. Computing each branch's rate in isolation (the old approach) let each assume
 ///   it alone could draw all 20 Farmland's worth of soybean, silently doubling the effective
 ///   rate. Here both branches' soybean utilization lands in the same `Farmland` entry and sums.
-/// - Two DIFFERENT items hosted at the same facility for the same chain — e.g. Claw Game Cooker
+/// - Two DIFFERENT items hosted at the same facility for the same chain; e.g. Claw Game Cooker
 ///   both turning sugarcane into rock_candy AND assembling rock_candy+tofu into tofu_cake, or
 ///   Woodland growing both coconut and lemon for a soap recipe. These aren't the same item, but
 ///   they're still time-sharing one facility's capacity, so their utilization sums too.
@@ -359,7 +359,7 @@ fn accumulate_demand<'a>(
     if depth > 8 {
         return; // guard against unexpected circular references
     }
-    // Keyed by (facility, item) rather than facility alone — see `ProductionEfficiency`'s
+    // Keyed by (facility, item) rather than facility alone; see `ProductionEfficiency`'s
     // `facility_demand` doc comment for why per-item granularity matters (a facility can grow/host
     // several distinct items for one chain, each needing its own separate accounting rather than
     // one blurred-together total). The HashMap key itself does the "same item visited via multiple
@@ -408,7 +408,7 @@ fn compute_resource_demand<'a>(
 /// minimum, over every (facility, required-level threshold) touched anywhere in the tree, of
 /// however many owned tiers meet that threshold (see [`FacilityCounts::capacity_at_level`])
 /// divided by the accumulated utilization from items requiring at least that level (see
-/// [`accumulate_demand`]) — same threshold technique as `solve_facility_allocation`'s own
+/// [`accumulate_demand`]); same threshold technique as `solve_facility_allocation`'s own
 /// capacity constraints (see that function's doc comment for why per-threshold, not just
 /// per-facility, is the exact bound once a facility can own tiers at different levels). A
 /// facility owned at a single level (the common case) has only one threshold and this reduces to
@@ -428,8 +428,8 @@ fn batch_rate_bound(
     // Sorted for the same determinism reason as `solve_facility_allocation`'s identical pattern
     // (see that function's doc comment): `HashMap`/`HashSet` iteration order is randomized
     // per-process, and floating-point addition isn't perfectly order-independent, so summing
-    // `utilization` in a different order across runs could shift this bound by a rounding hair —
-    // enough, in a near-tied LP, to flip which of two equally-profitable candidates wins.
+    // `utilization` in a different order across runs could shift this bound by a rounding hair,
+    // enough in a near-tied LP to flip which of two equally-profitable candidates wins.
     let mut sorted_facilities: Vec<&str> = facility_thresholds.keys().copied().collect();
     sorted_facilities.sort_unstable();
     let mut bound = f64::INFINITY;
@@ -478,8 +478,8 @@ fn calculate_item_requirements(
         };
     }
     
-    // Try to find the best variant of this item (check quick_ variant first — new-beta name
-    // for what used to be the high_speed_ variant)
+    // Try to find the best variant of this item (check the quick_ variant first, e.g.
+    // quick_wheat for wheat)
     let high_speed_name = format!("quick_{}", item_name);
     let (item, actual_name) = {
         // Check if quick_ variant exists and is usable
@@ -651,7 +651,7 @@ fn calculate_item_requirements(
             }
         }
         
-        // Add processing time for this item — only units at a tier meeting `item.facility_level`
+        // Add processing time for this item; only units at a tier meeting `item.facility_level`
         // can actually run this recipe (see `FacilityCounts::capacity_at_level`).
         let processing_facility_count =
             facility_counts.capacity_at_level(&item.facility, item.facility_level) as f64;
@@ -676,7 +676,7 @@ fn calculate_item_requirements(
             is_valid: true,
         }
     } else {
-        // This is a base raw material — only units at a tier meeting `item.facility_level` can
+        // This is a base raw material; only units at a tier meeting `item.facility_level` can
         // actually run this recipe (see `FacilityCounts::capacity_at_level`).
         let facility_count = facility_counts.capacity_at_level(&item.facility, item.facility_level) as f64;
         let batches_needed = (required_amount / item.yield_amount as f64).ceil();
@@ -711,7 +711,7 @@ fn calculate_item_requirements(
 /// Maps a byproduct-target pseudo-currency name to the resource it names, or `None` if `target`
 /// is an ordinary sellable currency (`"coins"`/`"bud_tickets"`). Wood Blocks/Mineral Sand only
 /// ever come as a side effect of growing/mining (`ProductionItem::byproduct`), never as something
-/// directly sold, so they don't correspond to any `item.sell_currency` — targeting one means
+/// directly sold, so they don't correspond to any `item.sell_currency`; targeting one means
 /// "maximize how much of this resource Woodland/Mineral Pile produces," not "maximize profit."
 pub fn byproduct_resource_name(target: &str) -> Option<&'static str> {
     match target {
@@ -733,7 +733,7 @@ pub fn byproduct_resource_name(target: &str) -> Option<&'static str> {
 ///
 /// * `items` - All available production items
 /// * `target_currency` - What to optimize for: a sellable currency (`"coins"`/`"bud_tickets"`) or
-///   a byproduct pseudo-currency (`"wood_blocks"`/`"mineral_sand"` — see
+///   a byproduct pseudo-currency (`"wood_blocks"`/`"mineral_sand"`; see
 ///   [`byproduct_resource_name`])
 /// * `facility_counts` - Configuration for each facility (count and level)
 /// * `module_levels` - Configuration for each item upgrade module level
@@ -748,7 +748,7 @@ pub fn byproduct_resource_name(target: &str) -> Option<&'static str> {
 /// - Their facility level exceeds the specific facility's level
 /// - They require a module level that isn't met
 /// - They don't produce the target (its `sell_currency` for a currency target, or its
-///   `byproduct` resource for a byproduct target — see [`byproduct_resource_name`])
+///   `byproduct` resource for a byproduct target; see [`byproduct_resource_name`])
 /// - Their required raw materials aren't available at the raw material facility's level
 ///
 /// A byproduct target only ever matches raw grower items (every processed item's `byproduct` is
@@ -928,13 +928,13 @@ pub fn calculate_efficiencies(
                 // We need to calculate the raw material RATE instead.
                 //
                 // For now, let's calculate: what's the rate at which farms can supply materials?
-                // rate = (yield per batch Ã— facility_count) / batch_time / required_per_processed_batch
+                // rate = (yield per batch × facility_count) / batch_time / required_per_processed_batch
                 // This gives us "processed batches worth of materials per second"
                 
                 // Collect raw material details for the same-facility multi-material allocation
                 // feature (e.g. dried_flowers' lavender+rose both from Farmland). The actual
                 // bottleneck-limited rate is computed separately below, via the whole-tree
-                // resource-demand walk — NOT per-ingredient here — because two ingredients can
+                // resource-demand walk, not per-ingredient here, since two ingredients can
                 // independently need the same deeper raw material (see `accumulate_demand`'s doc
                 // comment), which a per-ingredient loop can't detect.
                 for (i, raw_mat) in raw_mats.iter().enumerate() {
@@ -959,7 +959,7 @@ pub fn calculate_efficiencies(
                 // True bottleneck-limited rate for this item: walks the whole ingredient tree and
                 // takes the minimum capacity/demand ratio over every facility touched anywhere in
                 // it (including this item's own processing facility, and any raw material shared
-                // across multiple branches) — see `compute_resource_demand`/`batch_rate_bound`.
+                // across multiple branches); see `compute_resource_demand`/`batch_rate_bound`.
                 let demand = compute_resource_demand(item, &item_map, facility_counts, module_levels);
                 let batches_per_second = batch_rate_bound(&demand, facility_counts, &item_map);
                 let facility_demand: Vec<(String, String, f64)> = demand
@@ -1046,7 +1046,7 @@ pub fn calculate_efficiencies(
             };
 
         // The LP objective value for one batch: net profit (sell revenue minus ingredient cost)
-        // for a currency target, or just the byproduct amount for a byproduct target — there's no
+        // for a currency target, or just the byproduct amount for a byproduct target; there's no
         // currency involved there, maximizing raw output IS the goal, not profit. (The filter
         // above already guarantees `item.byproduct` matches when targeting one.)
         let batch_value = match byproduct_resource_name(target_currency) {
@@ -1292,8 +1292,8 @@ pub fn find_best_production_path(
 ///
 /// This function finds all production chains that can run simultaneously without
 /// sharing any facilities. For example:
-/// - Farmland â†’ Carousel Mill (super_wheatmeal)
-/// - Woodland â†’ Crafting Table (wood_sculpture)  
+/// - Farmland → Carousel Mill (super_wheatmeal)
+/// - Woodland → Crafting Table (wood_sculpture)  
 /// - Nimbus Bed (wool)
 /// All running in parallel since they use different facilities.
 ///
@@ -1865,62 +1865,12 @@ pub fn find_self_sufficient_path(
     })
 }
 
-/// Finds the fastest way to reach a target coin balance, given the current balance, by running
-/// a conflict-free set of coin-producing items simultaneously across every owned facility.
-///
-/// # Approach
-///
-/// Greedy set-packing by rate, same pattern as [`find_parallel_production_path`]: sort every
-/// candidate item (across all facilities, not just one per facility) by
-/// `effective_profit_per_second` descending, then walk the list claiming facilities as items are
-/// selected. An item is only selected if EVERY facility its production chain touches
-/// (`eff.all_facilities` — its own facility plus any raw-material/intermediate facilities) is
-/// still unclaimed; selecting it claims all of them.
-///
-/// This matters because `calculate_efficiencies` computes a processed item's rate assuming the
-/// *entire* owned count of its raw-material facility is dedicated to gathering that ingredient
-/// (see its "gathering rate" comment) — e.g. Bouncy Brew Keg's rice_drink assumes all of
-/// Farmland is growing rice for it. Picking the best item independently per facility (the
-/// previous approach) ignored this: Farmland could simultaneously be told to grow strawberries
-/// (its own best standalone item) *and* be silently assumed to supply rice_drink's rice, which
-/// isn't physically possible with one Farmland. The greedy claim step prevents that: once
-/// rice_drink claims Farmland, Farmland's own standalone candidates (strawberries, etc.) are
-/// skipped since Farmland is no longer free.
-///
-/// Completion time is NOT simply `delta_coins / total_rate` — that would assume every selected
-/// item is already at steady-state output from t=0, ignoring that a processed item's ingredients
-/// have to actually grow/gather before the first batch can even be processed (rice_drink can't
-/// sell anything until rice has grown *and* been through Bouncy Brew Keg once). Each selected
-/// item instead contributes `rate * max(0, t - lead_time)`: nothing until its own first-batch
-/// lead time (`item_lead_time`) has passed, then steady-state income after that — a hybrid of
-/// "everything starts at once" (still true — every facility begins working in parallel at t=0)
-/// and "nothing is instant" (each item's income stream is delayed by its own pipeline depth, not
-/// by everyone else's). Coins accumulated by time `t` is the sum of that across every selected
-/// item, which is monotonically non-decreasing and piecewise-linear in `t`, so the minimal `t`
-/// reaching `delta_coins` is found by binary search (same doubling-then-bisecting pattern used
-/// by the removed multi-resource version of this function — see history below). Since using more
-/// facilities always helps (never hurts) reach the target sooner, the minimal plan still uses
-/// every claimable facility for the full duration.
-///
-/// # History
-///
-/// This originally optimized for coins + Wood Blocks + Mineral Sand simultaneously (an RV/
-/// Homeland level-up costs all three), with Wood Blocks/Mineral Sand production facilities
-/// dedicated to byproduct income and a Resource Exchange integration to cover shortfalls. That
-/// made some facilities' coin output "extra" (already covered by byproduct side-income from a
-/// long Wood-Blocks-driven duration), which is where the `NotNeeded` status on `PlanStep`
-/// came from. Dropped in `BETA_NOTES.md` section 30 — Wood Blocks/Mineral Sand are trivially
-/// obtained by expanding plots in-game, so they weren't worth optimizing for. Section 31 then
-/// replaced the naive best-per-facility selection with the greedy claim-based approach described
-/// above, after it was caught recommending a facility for its own best item while also assuming
-/// (elsewhere) that the same facility fully supplied another item's ingredients. See sections 23,
-/// 27, and 29 for the full history of the removed multi-resource design.
-/// Time (seconds) until the very first batch of `name` is ready — the growing/gathering lead
+/// Time (seconds) until the very first batch of `name` is ready; the growing/gathering lead
 /// time before any output (and thus any coin income) exists at all, as opposed to the
 /// steady-state throughput rate used everywhere else in this module.
 ///
 /// For a raw material this is just `production_time` (every owned copy of the facility starts
-/// at t=0 and finishes its first batch together, regardless of facility count — more facilities
+/// at t=0 and finishes its first batch together, regardless of facility count; more facilities
 /// mean more *batches per completion*, not a faster *first* completion). For a processed item
 /// it's the slowest ingredient's own lead time, plus this item's own processing time on top
 /// (ingredients are gathered in parallel with each other, but processing can't start on an
@@ -1928,7 +1878,7 @@ pub fn find_self_sufficient_path(
 /// processed, used as an ingredient in caramel_nut_chips).
 ///
 /// Deliberately ignores facility count (already folded into
-/// `ProductionEfficiency::startup_time`, which this does NOT reuse — that field divides
+/// `ProductionEfficiency::startup_time`, which this does NOT reuse; that field divides
 /// processing time by facility count, which is right for steady-state throughput but wrong for
 /// "time until the first batch exists", the thing this function needs).
 fn item_lead_time(name: &str, item_map: &HashMap<&str, &ProductionItem>, depth: u32) -> f64 {
@@ -1951,23 +1901,23 @@ fn item_lead_time(name: &str, item_map: &HashMap<&str, &ProductionItem>, depth: 
 }
 
 /// Solves for the provably-optimal simultaneous allocation of every owned facility's capacity
-/// across every candidate item — replacing the old greedy-plus-leftover-patches approach (three
+/// across every candidate item; replacing the old greedy-plus-leftover-patches approach (three
 /// separate mechanisms accumulated over this project's history, each added to fix one more
 /// scenario the previous ones missed) with a linear program: maximize total coins/sec subject to
 /// no facility's capacity being oversubscribed.
 ///
 /// `eff.facility_demand` (see `compute_resource_demand`) already gives exactly the constraint
 /// coefficients needed: for item `i` and facility `f`, how much of `f`'s batch capacity one
-/// batch/sec of `i` consumes. That's the entire LP — one variable per item (its batches/sec,
-/// coefficient = net profit per batch, â‰¥ 0), one constraint per owned facility (sum of
-/// utilization Ã— rate across every item touching it â‰¤ that facility's count). A facility ending
-/// up split between multiple items falls out of the solution naturally whenever that's optimal —
+/// batch/sec of `i` consumes. That's the entire LP; one variable per item (its batches/sec,
+/// coefficient = net profit per batch, ≥ 0), one constraint per owned facility (sum of
+/// utilization × rate across every item touching it ≤ that facility's count). A facility ending
+/// up split between multiple items falls out of the solution naturally whenever that's optimal;
 /// no separate "leftover" bookkeeping needed, and no dependency on the order items happen to be
 /// considered in, since every variable is solved for simultaneously.
 ///
 /// Environment buildings and the temperature mode(s) each can be configured to provide. A
 /// building's mode is an optimizer decision (see `solve_facility_allocation`), not a player
-/// input — enter how many you own, the solver picks the profit-maximizing mode/layout. No two
+/// input; enter how many you own, the solver picks the profit-maximizing mode/layout. No two
 /// building types ever share a mode name, so `mode` alone always uniquely identifies which
 /// building type produced it.
 const ENVIRONMENT_BUILDINGS: &[(&str, &[&str])] = &[
@@ -1977,9 +1927,9 @@ const ENVIRONMENT_BUILDINGS: &[(&str, &[&str])] = &[
 ];
 
 /// For every environment-gated `(facility_type, mode)` combination with at least one candidate
-/// item, its per-plot value: `MAX` over such items of `batch_value / utilization` — "profit per
+/// item, its per-plot value: `MAX` over such items of `batch_value / utilization`; "profit per
 /// plot if a plot there were fully dedicated to this item's chain." Used to prioritize the
-/// environment packing solve (`crate::coverage::solve_building_packing`) — see that function's
+/// environment packing solve (`crate::coverage::solve_building_packing`); see that function's
 /// doc comment for why this is computed from each item's own static economics rather than from a
 /// completed rate solve (avoiding a chicken-and-egg bootstrap: an item needing an environment has
 /// rate 0 until coverage exists, so weighting by rate would mean nothing gated ever gets covered).
@@ -2021,8 +1971,8 @@ fn compute_coverage_weights(
 
 /// Solves the environment-coverage packing for every owned environment building type, using
 /// `weights` (see `compute_coverage_weights`) to prioritize which facility types get coverage
-/// when several share one building. Returns `(mode_counts, placements, layouts)` — `mode_counts`
-/// keyed by `(building, mode)`, `placements`/`layouts` keyed by `mode` — one independent (and
+/// when several share one building. Returns `(mode_counts, placements, layouts)`; `mode_counts`
+/// keyed by `(building, mode)`, `placements`/`layouts` keyed by `mode`; one independent (and
 /// fast) `crate::coverage::solve_building_packing` call per building type, never mixed with the
 /// continuous item-rate LP in the same `Problem` (see `solve_facility_allocation`'s doc comment
 /// for why that combination hangs in practice).
@@ -2038,7 +1988,7 @@ fn solve_environment_coverage(
     let mut placements: HashMap<&'static str, Vec<(crate::coverage::Placement, u32)>> = HashMap::new();
     let mut layouts: HashMap<&'static str, Vec<Vec<crate::coverage::Placement>>> = HashMap::new();
 
-    // How many of each environment-gated facility type the player actually owns — caps the
+    // How many of each environment-gated facility type the player actually owns; caps the
     // packing's placement usage so it can't invent more covered plots than physically exist (see
     // `solve_building_packing`'s doc comment).
     let facility_owned: Vec<(&'static str, u32)> = crate::coverage::ENVIRONMENT_GATED_FACILITIES
@@ -2052,12 +2002,11 @@ fn solve_environment_coverage(
             continue;
         }
         // Sorted (rather than left in `weights`' `HashMap` iteration order, which is randomized
-        // per-process) for two reasons: determinism — the same facility counts should always
-        // produce the same plan, not a different one on every run/restart — and because this
+        // per-process) for two reasons: determinism; the same facility counts should always
+        // produce the same plan, not a different one on every run/restart; and because this
         // order becomes each candidate's variable-creation order in
         // `crate::coverage::solve_one_building_layout`'s binary ILP, which measurably affects how
-        // fast its branch & bound converges (confirmed live: the exact same problem took anywhere
-        // from ~1s to ~9s across repeated runs before this was made deterministic).
+        // fast its branch & bound converges.
         let mut weighted: Vec<(&'static str, &'static str, f64)> = weights
             .iter()
             .filter(|((_, mode), _)| modes.contains(mode))
@@ -2094,28 +2043,24 @@ fn solve_environment_coverage(
 /// Farmland/Woodland/Starfall Hammock/Tidewhisper Sandcastle/Grass Blossom Mat/Dewy House crops
 /// can need a growing environment (`ProductionItem::environment`, e.g. "Cool", "Adequate") that
 /// only exists where an owned environment building (Heat Furnace/Cooling Unit/Sunlamp) covers it.
-/// Confirmed directly against the game (screenshots pinning down both the coverage geometry and
-/// the exact overlap rule — see `crate::coverage`'s doc comment): a building's coverage is real 2D
-/// area, not a small set of fixed presets, so how many of each facility type can share one
-/// building's coverage is computed via exact integer optimization
+/// A building's coverage is real 2D area, not a small set of fixed presets, so how many of each
+/// facility type can share one building's coverage is computed via exact integer optimization
 /// (`crate::coverage::solve_building_packing`) rather than picked from a lookup table.
 ///
-/// Unlike the original design, that packing solve is **not** part of this function's `Problem` —
-/// it's solved separately, upfront, by `solve_environment_coverage`, and its result (`coverage_
-/// bounds`) is passed in here as a fixed capacity per `(facility_type, mode)` pair. A single
-/// combined mixed-integer problem (continuous item rates + integer coverage packing, jointly
-/// optimized) was the original plan and was implemented first, but empirically hangs: a real
-/// scenario with only ~50 continuous variables plus ~120 integer variables never returned in 20+
-/// seconds of `microlp` branch & bound, while the packing alone (verified separately) solves in
-/// low milliseconds and this plain continuous LP (as it was before this feature existed) was
-/// always fast too. Decoupling them — packing computed once from each item's static economics
-/// (see `compute_coverage_weights`), then fed into this plain LP as a fixed bound — trades
-/// perfectly joint optimality for tractability, the same kind of accepted approximation
-/// `find_production_plan`'s own stranded-chain exclusion loop already uses elsewhere.
-/// `byproduct_floors` is `[(byproduct_resource_name, minimum_rate)]` — e.g. `[("Wood Blocks",
-/// 12.3)]` — used by the "prioritize Wood Blocks/Mineral Sand" toggle (see
+/// That packing solve is **not** part of this function's `Problem`; it's solved separately,
+/// upfront, by `solve_environment_coverage`, and its result (`coverage_bounds`) is passed in here
+/// as a fixed capacity per `(facility_type, mode)` pair. A single combined mixed-integer problem
+/// (continuous item rates + integer coverage packing, jointly optimized) hangs in practice: a
+/// scenario with only ~50 continuous variables plus ~120 integer variables never returns in 20+
+/// seconds of `microlp` branch & bound, while the packing alone solves in low milliseconds and
+/// this plain continuous LP is always fast on its own. Decoupling them; packing computed once
+/// from each item's static economics (see `compute_coverage_weights`), then fed into this plain LP
+/// as a fixed bound; trades perfectly joint optimality for tractability, the same kind of
+/// accepted approximation `find_production_plan`'s own stranded-chain exclusion loop already uses
+/// elsewhere. `byproduct_floors` is `[(byproduct_resource_name, minimum_rate)]`; e.g.
+/// `[("Wood Blocks", 12.3)]`; used by the "prioritize Wood Blocks/Mineral Sand" toggle (see
 /// `find_production_plan`'s doc comment) to force the LP to hit at least that total byproduct
-/// rate, GUARANTEEING it before letting profit maximization use whatever facility capacity is
+/// rate, guaranteeing it before letting profit maximization use whatever facility capacity is
 /// left over. Pass an empty slice for the normal (profit-only) case.
 fn solve_facility_allocation<'a>(
     item_map: &HashMap<&str, &ProductionItem>,
@@ -2126,8 +2071,8 @@ fn solve_facility_allocation<'a>(
 ) -> HashMap<&'a str, f64> {
     let mut problem = Problem::new(OptimizationDirection::Maximize);
 
-    // One column per candidate item with positive net profit — anything else can never help the
-    // objective (its coefficient would be â‰¤ 0), so excluding it up front keeps the problem small
+    // One column per candidate item with positive net profit; anything else can never help the
+    // objective (its coefficient would be ≤ 0), so excluding it up front keeps the problem small
     // without changing the optimal solution.
     let mut item_vars: Vec<(&'a ProductionEfficiency, microlp::Variable)> = Vec::new();
     for eff in effs {
@@ -2144,18 +2089,18 @@ fn solve_facility_allocation<'a>(
 
     // One row per (owned facility, required-level threshold) touched by at least one candidate:
     // total utilization from items requiring AT LEAST that level can't exceed however many owned
-    // tiers meet that bar (see `FacilityCounts::capacity_at_level`) — a higher-level tier can
+    // tiers meet that bar (see `FacilityCounts::capacity_at_level`); a higher-level tier can
     // always run a lower-level recipe too (an upgrade never takes capability away), so eligible-
-    // unit sets NEST as the threshold rises (level>=5 âŠ† level>=4 âŠ† ... âŠ† level>=1). One
+    // unit sets NEST as the threshold rises (level>=5 ⊆ level>=4 ⊆ ... ⊆ level>=1). One
     // constraint per distinct threshold that actually appears is the exact LP formulation for
-    // that nesting (a totally-ordered/"laminar" family of capacity constraints — both necessary,
+    // that nesting (a totally-ordered/"laminar" family of capacity constraints; both necessary,
     // since items requiring level D can only ever use tiers meeting it, and sufficient, since a
     // nested-demand transportation problem's feasibility is exactly characterized by these
     // threshold cuts), not an approximation. A facility owned at a single level (the
-    // overwhelmingly common case) has only one threshold and this reduces to exactly the single
-    // constraint this used to be. A single chain can host MULTIPLE distinct items at the same
+    // overwhelmingly common case) has only one threshold and this reduces to exactly one
+    // constraint. A single chain can host MULTIPLE distinct items at the same
     // facility (e.g. caramel_nut_chips needs walnut, chestnut, AND maple_syrup all from Woodland)
-    // — `facility_demand` has one entry per item, so this sums every matching entry rather than
+    //; `facility_demand` has one entry per item, so this sums every matching entry rather than
     // taking just the first (which would silently undercount the facility's true total
     // utilization for that chain).
     let item_facility_level = |item_name: &str| item_map.get(item_name).map(|i| i.facility_level).unwrap_or(1);
@@ -2171,8 +2116,7 @@ fn solve_facility_allocation<'a>(
     // solving it. Otherwise, whenever the true optimum has TIES (e.g. pine and a fallback crop
     // both fully using Woodland's capacity at equal profit), the simplex method's tie-breaking
     // can depend on constraint insertion order, so the same facilities could non-deterministically
-    // solve to a different-but-equally-optimal choice from one page load to the next — confirmed
-    // live: identical input reported pine one run and its fallback the next.
+    // solve to a different-but-equally-optimal choice from one page load to the next.
     let mut sorted_facilities: Vec<&str> = facility_thresholds.keys().copied().collect();
     sorted_facilities.sort_unstable();
     for facility in sorted_facilities {
@@ -2180,7 +2124,7 @@ fn solve_facility_allocation<'a>(
         thresholds.sort_unstable();
         for threshold in thresholds {
             // No lower bound skip here on purpose: a facility with zero owned tiers meeting this
-            // threshold must still get a constraint (capacity 0), not no constraint at all —
+            // threshold must still get a constraint (capacity 0), not no constraint at all;
             // skipping it here would let the LP treat "you don't own this" as "unlimited supply
             // of it" instead of "none available".
             let capacity = facility_counts.capacity_at_level(facility, threshold) as f64;
@@ -2206,11 +2150,11 @@ fn solve_facility_allocation<'a>(
     // Coverage-link constraints: for every (facility-type, environment) pair with at least one
     // candidate item needing it, total utilization from items needing that environment there
     // can't exceed the fixed coverage bound already computed for it (see this function's doc
-    // comment) — the LP's own capacity constraint above already bounds an item's utilization by
+    // comment); the LP's own capacity constraint above already bounds an item's utilization by
     // its facility's plot count; this adds a second, potentially tighter bound from environment
     // coverage alone. Each `facility_demand` entry now names its own specific item, so this reads
     // that item's own environment directly rather than assuming "whichever item happened to be
-    // first" applies to everything a chain hosts at that facility — a single chain can draw
+    // first" applies to everything a chain hosts at that facility; a single chain can draw
     // multiple items needing DIFFERENT (or no) environment from the same facility type (e.g.
     // walnut needs Cool, chestnut needs none, both feed caramel_nut_chips via Woodland).
     for &(facility_type, _) in crate::coverage::ENVIRONMENT_GATED_FACILITIES {
@@ -2262,12 +2206,12 @@ fn solve_facility_allocation<'a>(
     // Hard byproduct floors ("prioritize Wood Blocks/Mineral Sand"): for each `(resource,
     // min_rate)` pair, require the TOTAL byproduct output across every candidate touching that
     // resource to be at least `min_rate`, guaranteeing whatever rate was already found achievable
-    // when that byproduct was solved as its own target — combined with the facility's own
+    // when that byproduct was solved as its own target; combined with the facility's own
     // capacity constraint above, this forces the LP into (a mix that achieves) that same maximum,
     // while still letting it pick whichever specific mix is most profitable among ties. A
     // candidate's own contribution per unit of its rate is, for each `facility_demand` entry whose
     // item has a matching byproduct: `(utilization / that item's production_time) * byproduct
-    // amount` — i.e. batches/sec of that specific item per one batch/sec of the candidate, times
+    // amount`; i.e. batches/sec of that specific item per one batch/sec of the candidate, times
     // how much byproduct each batch yields.
     for &(resource, floor) in byproduct_floors {
         if floor <= 0.0 {
@@ -2295,7 +2239,7 @@ fn solve_facility_allocation<'a>(
     }
 
     // Every variable is bounded by at least its own facility's constraint (facility_demand always
-    // includes the item's own facility — see `accumulate_demand`), and every constraint's RHS is
+    // includes the item's own facility; see `accumulate_demand`), and every constraint's RHS is
     // a non-negative facility count, so this should always be feasible and bounded. Degrade to
     // "nothing selected" rather than panic if that assumption is ever wrong.
     let Ok(solution) = problem.solve() else {
@@ -2317,7 +2261,7 @@ fn solve_facility_allocation<'a>(
 
 /// Converts fractional shares of a pool's capacity into whole counts, using the largest-remainder
 /// method (the same apportionment technique used to allocate parliament seats) so the rounded
-/// counts land as close as possible to the true fractions while still being integers — a player
+/// counts land as close as possible to the true fractions while still being integers; a player
 /// assigns a whole plot to a crop, not a percentage of one, so "78% funnels into X" isn't
 /// actionable the way "16 Farmland grow X" is. `fractions` need not sum to 1.0.
 ///
@@ -2325,10 +2269,10 @@ fn solve_facility_allocation<'a>(
 /// different reasons:
 /// - `false` (grower plots, and a coverage pool's chain shares): round to nearest. Any shortfall
 ///   between true continuous demand and `total` is genuinely idle capacity, not a rounding
-///   artifact — `total` here is a real, already-integer scarce resource (owned plot count, or an
+///   artifact; `total` here is a real, already-integer scarce resource (owned plot count, or an
 ///   already-rounded coverage pool), so there's nothing to gain by rounding up past what the
 ///   fractions actually add up to.
-/// - `true` (an environment BUILDING's continuous share — see `build_environment_assignment`):
+/// - `true` (an environment BUILDING's continuous share; see `build_environment_assignment`):
 ///   round the total UP instead, capped at `total`. Configuring one more owned-but-otherwise-idle
 ///   building unit than the continuous LP strictly computed costs nothing (the unit is already
 ///   owned), but rounding it DOWN would silently under-cover what the continuous LP assumed was
@@ -2359,10 +2303,10 @@ fn apportion_counts(fractions: &[f64], total: u32, round_up: bool) -> Vec<u32> {
 }
 
 /// A GROWER facility (Farmland, Woodland, Mineral Pile, ...) has every plot committed to one crop
-/// for its whole cycle — it structurally never hosts a processed item (see the data loaders in
+/// for its whole cycle; it structurally never hosts a processed item (see the data loaders in
 /// `data.rs`: `load_farmland`/`load_woodland`/`load_workload_raw_material`/`load_nimbus_bed`
 /// always set `raw_materials: None`; `load_processing_*` always set it to `Some`). A PROCESSOR
-/// facility (Claw Game Cooker, Carousel Mill, ...) has no such constraint — it processes whatever
+/// facility (Claw Game Cooker, Carousel Mill, ...) has no such constraint; it processes whatever
 /// ingredients are ready, so genuinely cycling between recipes in whatever proportion their
 /// inputs allow is real, achievable behavior, not something that needs rounding.
 fn is_grower_facility(items: &[ProductionItem], name: &str) -> bool {
@@ -2377,19 +2321,19 @@ fn is_grower_facility(items: &[ProductionItem], name: &str) -> bool {
 ///
 /// The key includes the specific ITEM alongside the chain because one chain can draw several
 /// distinct items from the same facility (e.g. caramel_nut_chips needs walnut, chestnut, AND
-/// maple_syrup, all grown on Woodland) — each is its own share of the facility's plots, competing
+/// maple_syrup, all grown on Woodland); each is its own share of the facility's plots, competing
 /// fairly via the same `apportion_counts` call as any other two chains sharing one facility. A
 /// chain that hosts only one item at a facility (the common case) just gets one share, same as
 /// before.
 ///
 /// `environment_assignment` (see `build_environment_assignment`, which must be computed BEFORE
 /// this) caps each environment-gated item's demand on the grower pool at what it can actually use
-/// once environment coverage is rounded to whole buildings — without this, an item whose
+/// once environment coverage is rounded to whole buildings; without this, an item whose
 /// continuous rate assumed more coverage than rounds down to (e.g. the continuous LP finding 1.17
 /// Cooling Units enough, which only rounds to 1 whole unit) would keep reserving MORE grower
 /// plots than it can truly use, silently starving whatever plots should fall back to a
-/// non-gated/differently-gated crop instead. Capping the demand here — rather than only in
-/// `final_rate_for` afterwards — lets the freed-up plots flow to that fallback the same way
+/// non-gated/differently-gated crop instead. Capping the demand here; rather than only in
+/// `final_rate_for` afterwards; lets the freed-up plots flow to that fallback the same way
 /// competing chains already share a grower facility, instead of just vanishing.
 fn build_grower_assignment(
     items: &[ProductionItem],
@@ -2435,15 +2379,15 @@ fn build_grower_assignment(
 
 /// Caps an item's continuous LP rate by what its grower facilities can ACTUALLY supply once
 /// rounded to whole units (see `build_grower_assignment`), AND by whatever environment coverage
-/// (see `build_environment_assignment`) it's actually been assigned — a Farmland/Woodland crop
+/// (see `build_environment_assignment`) it's actually been assigned; a Farmland/Woodland crop
 /// needing a growing environment is bound by both its raw plot assignment and its environment
 /// assignment independently, since they're two separate whole-unit-rounded resources. This is the
 /// only correction needed: the continuous rate already correctly accounts for fair sharing at
 /// every PROCESSOR facility (that's what solving the LP jointly rather than greedily buys us), so
-/// redoing that math independently per item here — instead of taking the min against the
-/// untouched continuous rate — would silently reintroduce the shared-resource double-counting bug
-/// fixed earlier this session (e.g. Claw Game Cooker's three-way split would let each item assume
-/// exclusive access to it again).
+/// redoing that math independently per item here; instead of taking the min against the
+/// untouched continuous rate; would silently reintroduce a shared-resource double-counting bug
+/// (e.g. Claw Game Cooker's three-way split would let each item assume exclusive access to it
+/// again).
 fn final_rate_for(
     items: &[ProductionItem],
     item_map: &HashMap<&str, &ProductionItem>,
@@ -2460,7 +2404,7 @@ fn final_rate_for(
                 return bound;
             }
             // Each entry now names its own specific item, so this chain's rate is bounded
-            // independently by EVERY grower item it draws from (the min across all of them) —
+            // independently by EVERY grower item it draws from (the min across all of them),
             // exactly what's needed for a chain that requires multiple distinct crops from the
             // same or different facilities (e.g. caramel_nut_chips needs walnut, chestnut, AND
             // maple_syrup; if any one of those is short, the whole chain is bottlenecked by it).
@@ -2471,7 +2415,7 @@ fn final_rate_for(
             let mut bound = bound.min(assigned as f64 / utilization);
 
             // Every grower facility whose hosted crop needs an environment is capacity-gated now
-            // (see `crate::coverage`) — so this simplifies to just checking the crop itself.
+            // (see `crate::coverage`); so this simplifies to just checking the crop itself.
             let needs_environment = item_map.get(item_name.as_str()).is_some_and(|item| item.environment.is_some());
             if needs_environment {
                 let env_assigned = environment_assignment
@@ -2484,11 +2428,11 @@ fn final_rate_for(
         })
 }
 
-/// Sums every candidate's actual, POST-ROUNDING contribution to the plan's total value —
+/// Sums every candidate's actual, POST-ROUNDING contribution to the plan's total value:
 /// `final_rate_for(...) * batch_value` for each entry with a positive final rate. Used by
 /// `find_production_plan`'s marginal-chain exclusion check to compare whole-plan totals between
 /// candidate sets, since the continuous LP's own objective value can overstate what's truly
-/// achievable once grower/environment rounding is applied (see `final_rate_for`'s doc comment) —
+/// achievable once grower/environment rounding is applied (see `final_rate_for`'s doc comment);
 /// the rounded total is the only number that reflects what a player can actually execute.
 fn total_final_value(
     items: &[ProductionItem],
@@ -2513,17 +2457,17 @@ fn total_final_value(
 }
 
 /// Apportions each (facility-type, environment) coverage pool's continuous LP demand into
-/// authoritative whole-plot counts per contributing chain — mirrors `build_grower_assignment`
+/// authoritative whole-plot counts per contributing chain; mirrors `build_grower_assignment`
 /// exactly (same largest-remainder `apportion_counts` call), just pooled by the coverage an
 /// environment building provides instead of by raw facility ownership. Unlike the old
 /// preset-based version, the pool's `total` here is already an EXACT integer straight from
-/// `solve_facility_allocation`'s packing placements — no building-rounding step needed first
+/// `solve_facility_allocation`'s packing placements; no building-rounding step needed first
 /// (see `crate::coverage`'s doc comment: the whole environment side of that solve is integer).
 ///
 /// A single chain's *share* of a coverage pool can still exceed the pool's `total` in rare cases
 /// (e.g. several competing chains' continuous demand summing to more than the integer solve
 /// actually allotted that combination, a residual-imprecision case analogous to the one noted on
-/// `build_grower_assignment`) — `apportion_counts` assumes its input fractions are genuine
+/// `build_grower_assignment`); `apportion_counts` assumes its input fractions are genuine
 /// proportions of the whole (summing to at most 1), so a share above 1 would otherwise pass
 /// straight through unclamped and hand out more coverage than physically exists. Normalizing by
 /// the demand sum whenever it exceeds 1 (below) is the actual correctness guarantee.
@@ -2532,7 +2476,7 @@ fn total_final_value(
 /// (`(facility_type, chain_name, item_name) -> assigned whole plots`) for `final_rate_for`'s
 /// capping. The item is part of the key for the same reason as `build_grower_assignment`: one
 /// chain can draw several distinct items from the same facility type, needing DIFFERENT (or no)
-/// environment coverage each — e.g. caramel_nut_chips draws walnut (needs Cool), chestnut (needs
+/// environment coverage each; e.g. caramel_nut_chips draws walnut (needs Cool), chestnut (needs
 /// none), and maple_syrup (needs Warm), all from Woodland.
 fn build_environment_assignment(
     item_map: &HashMap<&str, &ProductionItem>,
@@ -2540,7 +2484,7 @@ fn build_environment_assignment(
     eff_by_name: &HashMap<&str, &ProductionEfficiency>,
     placements: &HashMap<&'static str, Vec<(crate::coverage::Placement, u32)>>,
 ) -> HashMap<(String, String, String), u32> {
-    // Coverage actually available per (facility_type, environment) pool — summed directly from
+    // Coverage actually available per (facility_type, environment) pool; summed directly from
     // the exact integer placement counts.
     let mut coverage: HashMap<(&str, &str), u32> = HashMap::new();
     for (&mode, placed) in placements {
@@ -2550,7 +2494,7 @@ fn build_environment_assignment(
     }
 
     // Each chain's continuous fractional share of whichever (facility_type, environment) pool it
-    // draws from — mirrors `build_grower_assignment`'s loop structure exactly, now per (chain,
+    // draws from; mirrors `build_grower_assignment`'s loop structure exactly, now per (chain,
     // item) share rather than per chain, since each `facility_demand` entry names its own item.
     let mut pool_shares: HashMap<(&str, &str), Vec<(&str, &str, f64)>> = HashMap::new();
     for (&name, &rate) in allocation {
@@ -2594,26 +2538,20 @@ fn build_environment_assignment(
 }
 
 /// For every PROCESSOR facility touched by any candidate item with a positive final rate, the
-/// `(item_name, fraction of its capacity, rate_per_second)` for each item hosted there — reused
+/// `(item_name, units of capacity needed, rate_per_second)` for each item hosted there; reused
 /// both to detect "genuine contention" (more distinct dedicated jobs wanting a facility than it
-/// has units — see `find_production_plan`'s exclusion loop) and to build the final `coin_items`
+/// has units; see `find_production_plan`'s exclusion loop) and to build the final `coin_items`
 /// facility-plan rows, so this logic isn't duplicated.
 ///
-/// One entry PER DISTINCT ITEM a chain hosts at this facility, not one combined entry per chain —
-/// a player sets each physical unit to run ONE recipe and leaves it running (confirmed live: they
-/// don't cycle a single unit between recipes), so a chain needing an intermediate made at the same
-/// facility type as its own final item (e.g. wool_fabric also needing woolen_yarn made at Joy
-/// Wheel Loom first) genuinely needs a SEPARATE dedicated unit for each hop, not one unit
-/// time-sharing both. Combining them into one entry (an earlier version of this function did,
-/// specifically to avoid this exact double-counting) was itself the bug: it hid that a two-hop
-/// chain needs two units, understating both its true facility requirement and, in the display,
-/// falsely implying one unit alternates between recipes.
+/// One entry PER DISTINCT ITEM a chain hosts at this facility, not one combined entry per chain;
+/// a player sets each physical unit to run ONE recipe and leaves it running, never cycling a
+/// single unit between recipes, so a chain needing an intermediate made at the same facility type
+/// as its own final item (e.g. wool_fabric also needing woolen_yarn made at Joy Wheel Loom first)
+/// genuinely needs a separate dedicated unit for each hop, not one unit time-sharing both.
 ///
-/// A useful invariant: for a facility used by only one item, that item's `fraction` is always
-/// `â‰¤ 1`, because the LP's own capacity constraint (`Î£ utilization Ã— rate â‰¤ capacity`) is defined
-/// relative to that same `capacity` — a solo consumer's usage can never exceed what the
-/// constraint allows. So every contributor to a contended facility needs exactly one dedicated
-/// unit, never more.
+/// The "units of capacity needed" figure is `utilization * rate` directly, not normalized against
+/// owned capacity; see the comment at its computation below for why dividing by capacity there
+/// would be wrong for anything needing more than one whole unit.
 fn build_processor_usage<'a>(
     items: &[ProductionItem],
     item_map: &HashMap<&str, &ProductionItem>,
@@ -2642,13 +2580,12 @@ fn build_processor_usage<'a>(
             // `utilization * rate` is already, on its own, "how many whole facility units this
             // item's rate needs" (utilization is seconds of this facility's time per one batch of
             // `eff`'s own rate, so multiplying by a batches/sec rate cancels to a dimensionless
-            // unit-count) — see `accumulate_demand`'s doc comment and the identical quantity used
-            // directly in `solve_facility_allocation`'s own capacity constraint. A prior version of
-            // this function divided by `capacity` here, turning that unit-count into a fraction OF
-            // total owned capacity — harmless for a trickle contributor (fraction stays under 1
-            // either way), but silently wrong for anything needing MORE than one unit (e.g. one
-            // item alone dominating 5 of 5 owned Crafting Tables came out as `fraction = 1.0`,
-            // `ceil() = 1`, reporting 1 dedicated unit instead of the true 5).
+            // unit-count); see `accumulate_demand`'s doc comment and the identical quantity used
+            // directly in `solve_facility_allocation`'s own capacity constraint. Do not divide by
+            // `capacity` here: that would turn this into a fraction of total owned capacity, which
+            // is silently wrong for anything needing more than one whole unit (e.g. one item alone
+            // dominating 5 of 5 owned Crafting Tables would come out as a fraction of 1.0, ceiling
+            // to 1 dedicated unit instead of the true 5).
             let units_needed = utilization * rate;
             if units_needed < 0.001 {
                 continue; // negligible, not worth reporting
@@ -2661,8 +2598,8 @@ fn build_processor_usage<'a>(
 
 /// The true maximum byproduct rate achievable for `byproduct_currency` (`"wood_blocks"` or
 /// `"mineral_sand"`) using ALL of `facility_counts`, computed by running the exact same pipeline
-/// `find_production_plan` itself uses (efficiencies â†’ environment coverage â†’ facility-allocation
-/// LP) with that byproduct as the sole target and no floor of its own — i.e. "if every owned
+/// `find_production_plan` itself uses (efficiencies → environment coverage → facility-allocation
+/// LP) with that byproduct as the sole target and no floor of its own; i.e. "if every owned
 /// Woodland/Mineral Pile plot were free to be dedicated purely to maximizing this byproduct, what
 /// rate would that achieve?" Used by `find_production_plan`'s `prioritize_byproducts` to compute
 /// the floor it then forces the real (profit-targeting) solve to meet.
@@ -2691,7 +2628,7 @@ fn max_achievable_byproduct_rate(
 /// anywhere (genuinely infeasible). Factored out of `find_production_plan` so its own
 /// environment-coverage-CHOICE exclusion pass (see that function's doc comment) can re-run this
 /// whole pipeline against a candidate set with one more chain excluded, to test whether ceding an
-/// environment-gated chain's building coverage to a competing chain does better overall — the
+/// environment-gated chain's building coverage to a competing chain does better overall; the
 /// SAME "try excluding, keep it only if the real total improves" pattern already used inside this
 /// pipeline for stranded/contended chains, just one level up (coverage-CHOICE rather than
 /// facility-plot rounding).
@@ -2701,6 +2638,7 @@ fn solve_environment_and_facility_allocation(
     effs: &[ProductionEfficiency],
     facility_counts: &FacilityCounts,
     byproduct_floors: &[(&str, f64)],
+    trial_count: &mut u32,
 ) -> Option<(
     HashMap<(&'static str, &'static str), u32>,
     HashMap<&'static str, Vec<(crate::coverage::Placement, u32)>>,
@@ -2710,20 +2648,19 @@ fn solve_environment_and_facility_allocation(
 )> {
     // Environment coverage (see `solve_facility_allocation`'s doc comment for why this is solved
     // separately from, rather than jointly with, the continuous item-rate LP below) is priced by
-    // `compute_coverage_weights`'s own doc comment as "profit per plot IF fully dedicated" — a
+    // `compute_coverage_weights`'s own doc comment as "profit per plot IF fully dedicated"; a
     // deliberately static, decoupled estimate to avoid a chicken-and-egg bootstrap. That estimate
     // can be badly wrong for a deep, multi-hop chain whose OWN other ingredients are themselves
-    // bottlenecked (confirmed live: `jello` — needing grape/Farmland/Adequate, quick_coconut/
-    // Woodland/Scorching, AND three processor facilities — priced its grape need at 1.78/plot,
-    // outbidding pine/cedarwood_incense's real 0.86/plot for a Sunlamp's limited Adequate
-    // coverage, even though jello never actually gets produced once every other constraint in its
-    // chain is accounted for — that reserved coverage was pure waste, starved from pine for
-    // nothing). Fixed with two passes: solve once with the naive (possibly-optimistic) weights,
-    // see which chains ACTUALLY end up producing something once the real joint solve (including
-    // grower/environment rounding) settles, then recompute weights using ONLY those and re-solve
-    // once more — a phantom chain that never survives the real solve can no longer skew coverage
-    // priority away from something that does. Capped at exactly one refinement (not an open-ended
-    // fixed point) to bound the added cost to roughly double, the same kind of tractability trade
+    // bottlenecked: a chain needing several other constrained facilities can price its share of a
+    // scarce coverage pool higher than a genuinely simpler, more valuable chain, even though the
+    // deep chain never actually gets produced once every other constraint is accounted for;
+    // reserving that coverage for it is pure waste, starving the simpler chain for nothing. Two
+    // passes: solve once with the naive (possibly-optimistic) weights, see which chains
+    // ACTUALLY end up producing something once the real joint solve (including grower/environment
+    // rounding) settles, then recompute weights using ONLY those and re-solve once more; a
+    // phantom chain that never survives the real solve can no longer skew coverage priority away
+    // from something that does. Capped at exactly one refinement (not an open-ended fixed point)
+    // to bound the added cost to roughly double, the same kind of tractability trade
     // `MAX_MARGINAL_EXCLUSIONS` below already makes.
     let mut coverage_weights = compute_coverage_weights(item_map, effs);
     let mut refined_once = false;
@@ -2737,7 +2674,7 @@ fn solve_environment_and_facility_allocation(
         }
 
         // Solve for the provably-optimal simultaneous allocation of every owned facility's
-        // capacity across every candidate item — see `solve_facility_allocation`'s doc comment
+        // capacity across every candidate item; see `solve_facility_allocation`'s doc comment
         // for why this replaces the old greedy-plus-leftover-patches approach entirely.
         //
         // A chain needing TWO OR MORE different grower facilities (e.g. maple_candy_star needs
@@ -2747,12 +2684,12 @@ fn solve_environment_and_facility_allocation(
         // instead to something more valuable) while the OTHER grower still shows a whole-unit
         // assignment to a chain that can now never actually produce anything. Detect that and
         // re-solve with the dead chain excluded, so the LP finds the stranded facility's
-        // genuinely useful alternative instead of recommending a dedication to nothing — repeats
+        // genuinely useful alternative instead of recommending a dedication to nothing; repeats
         // until stable (each pass excludes at least one more item, and the candidate set is
         // small, so this converges quickly).
         let mut excluded: HashSet<String> = HashSet::new();
         // Bounds the marginal-chain exclusion pass below (see its own comment) to at most this
-        // many exclusions total — each one re-solves the whole candidate set, so this caps that
+        // many exclusions total; each one re-solves the whole candidate set, so this caps that
         // pass's worst-case added cost to a fixed multiple of one solve rather than letting it
         // scale with candidate count. A plan this deep into marginal, single-plot-level
         // improvements is already very close to optimal; past this point, trade the last sliver
@@ -2765,8 +2702,9 @@ fn solve_environment_and_facility_allocation(
                 effs.iter().filter(|e| !excluded.contains(&e.item.name)).cloned().collect();
             let trial_allocation =
                 solve_facility_allocation(item_map, &trial, facility_counts, &coverage_bounds, byproduct_floors);
+            *trial_count += 1;
             if trial_allocation.is_empty() {
-                // Nothing profitable available anywhere — genuinely infeasible.
+                // Nothing profitable available anywhere; genuinely infeasible.
                 return None;
             }
             let trial_eff_by_name: HashMap<&str, &ProductionEfficiency> =
@@ -2789,11 +2727,11 @@ fn solve_environment_and_facility_allocation(
                 .map(|(&name, _)| name.to_string())
                 .collect();
 
-            // A processor facility can only ever be "set and left" on ONE recipe at a time — the
+            // A processor facility can only ever be "set and left" on ONE recipe at a time; the
             // continuous LP relaxation's assumption that it can be fractionally time-shared
             // between several recipes isn't something a player can actually execute. When more
             // distinct recipes want a facility than it has units, keep the `owned` most
-            // profitable ones (ranked by their own rate_per_second — every contributor needs
+            // profitable ones (ranked by their own rate_per_second; every contributor needs
             // exactly one dedicated unit regardless of its fraction, see
             // `build_processor_usage`'s doc comment, so ranking by economic value directly
             // answers "which recipe is worth the unit") and exclude the rest, re-solving so the
@@ -2812,11 +2750,11 @@ fn solve_environment_and_facility_allocation(
             for (&facility, contributors) in &trial_processor_usage {
                 let owned = facility_counts.get_count(facility) as usize;
                 // Each DISTINCT item a chain hosts here needs its own dedicated unit (see
-                // `build_processor_usage`'s doc comment) — a two-hop chain (e.g. wool_fabric also
+                // `build_processor_usage`'s doc comment); a two-hop chain (e.g. wool_fabric also
                 // needing woolen_yarn made here first) needs two whole units, not one shared
                 // fractionally. Group by chain, sum each chain's own hop count, and greedily keep
                 // the most profitable chains (by rate_per_second, identical across all of one
-                // chain's own hops) until owned capacity runs out — excluding a losing chain
+                // chain's own hops) until owned capacity runs out; excluding a losing chain
                 // WHOLLY (never just one of its hops) once it can't fit.
                 let mut hops_per_chain: HashMap<&str, (usize, f64)> = HashMap::new();
                 for &(eff, _item_name, _fraction, rate_per_second) in contributors {
@@ -2846,23 +2784,22 @@ fn solve_environment_and_facility_allocation(
                 break 'exclusion trial;
             }
 
-            // No fully-stranded or contended chains left — but independent per-facility rounding
+            // No fully-stranded or contended chains left; but independent per-facility rounding
             // (`build_grower_assignment`) only prevents a chain's rate from rounding all the way
             // to ZERO; it doesn't ask whether keeping that chain's rounded plots is actually the
             // more profitable use of them. A chain can survive with a small, real-but-worse
             // foothold on a shared grower facility instead of being properly out-competed by
-            // whatever else could be done with those same plots. Confirmed live in two different
-            // shapes: (a) two SEPARATE chains sharing one facility — a small quick_lemon share
-            // for premium_lemon_incense survived rounding, but was worth less than giving those
-            // Woodland plots to pine/cedarwood_incense instead (5.69/s vs 5.84/s achievable by
-            // dropping it); (b) a SINGLE chain spanning multiple items at one facility —
-            // caramel_nut_chips's walnut+chestnut+maple_syrup split of Woodland survived
-            // rounding too, but was worth less than dropping the whole chain and selling walnut
-            // alone (9.71/s vs 10.14/s). Case (b) means the right test isn't "does this facility
+            // whatever else could be done with those same plots. This shows up in two different
+            // shapes: (a) two SEPARATE chains sharing one facility, e.g. a small quick_lemon share
+            // for premium_lemon_incense surviving rounding while worth less than giving those
+            // Woodland plots to pine/cedarwood_incense instead; (b) a SINGLE chain spanning
+            // multiple items at one facility, e.g. caramel_nut_chips's walnut+chestnut+maple_syrup
+            // split of Woodland surviving rounding while worth less than dropping the whole chain
+            // and selling walnut alone. Case (b) means the right test isn't "does this facility
             // have more than one CHAIN on it" (that misses a single chain using several items
-            // there) but "does it have more than one DISTINCT ITEM on it" — any chain touching
+            // there) but "does it have more than one DISTINCT ITEM on it"; any chain touching
             // such a facility can possibly be improved by dropping it, since a chain with the
-            // facility's sole item has nothing to lose it to. Sorted for determinism — `HashSet`
+            // facility's sole item has nothing to lose it to. Sorted for determinism; `HashSet`
             // iteration order is randomized per-process, and picking between candidates based on
             // that would make the same input produce different plans across runs.
             let current_total = total_final_value(
@@ -2945,7 +2882,7 @@ fn solve_environment_and_facility_allocation(
         }
 
         // Which of the settled candidates actually end up producing something, once grower and
-        // environment rounding are both applied — the same "true, rounded outcome" check
+        // environment rounding are both applied; the same "true, rounded outcome" check
         // `total_final_value` uses, not the raw continuous LP rate.
         let pass_allocation =
             solve_facility_allocation(item_map, &candidates, facility_counts, &coverage_bounds, byproduct_floors);
@@ -2967,7 +2904,7 @@ fn solve_environment_and_facility_allocation(
         let refined_weights = compute_coverage_weights(item_map, &producing);
         refined_once = true;
         if refined_weights == coverage_weights {
-            // Nothing would change — skip the redundant second pass.
+            // Nothing would change; skip the redundant second pass.
             break (mode_counts, placements, layouts, coverage_bounds, candidates);
         }
         coverage_weights = refined_weights;
@@ -2976,18 +2913,18 @@ fn solve_environment_and_facility_allocation(
     Some((mode_counts, placements, layouts, coverage_bounds, candidates))
 }
 
-/// Solves for the provably-optimal simultaneous use of every owned facility for one target —
+/// Solves for the provably-optimal simultaneous use of every owned facility for one target,
 /// a currency (`"coins"`/`"bud_tickets"`) or byproduct pseudo-currency (`"wood_blocks"`/
-/// `"mineral_sand"` — see `byproduct_resource_name`), matching `calculate_efficiencies`'
-/// `target_currency` — target-independent: no goal amount is needed to know the best achievable
+/// `"mineral_sand"`; see `byproduct_resource_name`), matching `calculate_efficiencies`'
+/// `target_currency`. Target-independent: no goal amount is needed to know the best achievable
 /// rate and facility plan. Pass the result to `time_to_reach_goal` to find out how long a
 /// specific goal takes.
 ///
 /// `prioritize_byproducts`, when `true` and `currency` is itself a real currency (not already a
-/// byproduct target — prioritizing would be a no-op there, the whole plan already IS byproduct
+/// byproduct target; prioritizing would be a no-op there, the whole plan already IS byproduct
 /// maximization), forces the solve to hit the true maximum achievable Wood Blocks AND Mineral Sand
 /// rate first (see `max_achievable_byproduct_rate`), then optimizes `currency` profit with
-/// whatever facility capacity is left over — a hard, real trade of profit for guaranteed maximum
+/// whatever facility capacity is left over; a hard, real trade of profit for guaranteed maximum
 /// byproduct output, not a soft weighting. This is a real in-game constraint some players face
 /// (Wood Blocks/Mineral Sand are needed elsewhere and can't just be bought), so it's opt-in per
 /// call rather than a fixed behavior.
@@ -3017,8 +2954,16 @@ pub fn find_production_plan(
         Vec::new()
     };
 
+    let mut trial_count: u32 = 0;
     let Some((mut mode_counts, mut placements, mut layouts, mut coverage_bounds, mut candidates)) =
-        solve_environment_and_facility_allocation(items, &item_map, &effs, facility_counts, &byproduct_floors)
+        solve_environment_and_facility_allocation(
+            items,
+            &item_map,
+            &effs,
+            facility_counts,
+            &byproduct_floors,
+            &mut trial_count,
+        )
     else {
         return None;
     };
@@ -3027,28 +2972,23 @@ pub fn find_production_plan(
     // fixes a phantom-coverage bug (a chain whose price LOOKED good but never actually produces
     // anything hogging a building's coverage), but that's not the only way static per-plot pricing
     // can mislead the packing pre-solve. Two chains can BOTH genuinely produce something and still
-    // be a bad joint choice: confirmed live with only 1 Sunlamp but 3 Cooling Units owned, grape
-    // (Farmland, Adequate) priced high enough to claim the single Sunlamp, dragging pine (Woodland,
-    // ALSO Adequate) into competing for that same tiny pool — while excluding grape entirely let
-    // ginseng (Farmland, Cool) and pine both share the Cooling Units' 3x larger pool instead,
-    // raising the real total by ~4%. Since coverage is priced from each chain's OWN static
-    // economics with no idea how many BUILDINGS of each competing environment exist, it can't see
-    // this trade-off coming — the only way to know is to actually try the alternative and compare
-    // real totals, same "try excluding, keep it only if it truly helps" pattern
-    // `solve_environment_and_facility_allocation`'s own marginal-exclusion pass already uses one
-    // level down (for facility-PLOT rounding rather than environment-coverage choice).
+    // be a bad joint choice: a chain whose environment is covered by a scarce building type can
+    // outbid a competing chain for it, even when that competing chain would do better sharing a
+    // more abundant building type's larger pool with something else. Since coverage is priced from
+    // each chain's OWN static economics with no idea how many buildings of each competing
+    // environment exist, it can't see this trade-off coming; the only way to know is to actually
+    // try the alternative and compare real totals, the same "try excluding, keep it only if it
+    // truly helps" pattern `solve_environment_and_facility_allocation`'s own marginal-exclusion
+    // pass already uses one level down (for facility-plot rounding rather than environment-coverage
+    // choice).
     //
     // Each trial here reruns that ENTIRE pipeline (packing ILP included), unlike the cheap LP-only
-    // marginal-exclusion pass inside it — a wall-clock budget was tried first but proved flaky
-    // (under any real CPU contention, e.g. the test suite's own parallelism, the baseline solve
-    // itself reads as slower and the whole pass gets skipped even for a genuinely cheap scenario,
-    // silently reintroducing this exact bug nondeterministically). Bounding by total OWNED
-    // environment-building count instead is deterministic and still tracks packing cost directly:
-    // each owned building widens that type's placement-variable integer range in
-    // `solve_building_packing`'s ILP (see its own doc comment), so more owned buildings means a
-    // larger branch & bound regardless of system load. Confirmed against both known cases: the
-    // reported bug's 3+3+1=7 owned buildings should run this pass, `test_large_multi_facility_
-    // config_stays_fast`'s 7+9+3=19 should not.
+    // marginal-exclusion pass inside it, so this pass is bounded by total OWNED environment-
+    // building count rather than wall-clock time: each owned building widens that type's
+    // placement-variable integer range in `solve_building_packing`'s ILP (see its own doc
+    // comment), so more owned buildings means a larger branch & bound regardless of system load;
+    // a deterministic proxy that stays correct under CPU contention, unlike timing the solve
+    // directly.
     let total_environment_buildings: u32 = ENVIRONMENT_BUILDINGS
         .iter()
         .map(|&(building, _)| facility_counts.get_count(building))
@@ -3057,7 +2997,7 @@ pub fn find_production_plan(
 
     let mut environment_excluded: HashSet<String> = HashSet::new();
     // Bounds this pass the same way `MAX_MARGINAL_EXCLUSIONS` bounds the one inside
-    // `solve_environment_and_facility_allocation` — each exclusion re-runs that entire pipeline
+    // `solve_environment_and_facility_allocation`; each exclusion re-runs that entire pipeline
     // (itself not free), so this caps the added cost to a small fixed multiple rather than letting
     // it scale with how many environment-gated chains are in play.
     const MAX_ENVIRONMENT_EXCLUSIONS: u32 = 3;
@@ -3067,6 +3007,7 @@ pub fn find_production_plan(
         }
         let allocation =
             solve_facility_allocation(&item_map, &candidates, facility_counts, &coverage_bounds, &byproduct_floors);
+        trial_count += 1;
         let eff_by_name: HashMap<&str, &ProductionEfficiency> =
             candidates.iter().map(|e| (e.item.name.as_str(), e)).collect();
         let environment_assignment = build_environment_assignment(&item_map, &allocation, &eff_by_name, &placements);
@@ -3104,13 +3045,12 @@ pub fn find_production_plan(
             counts.into_iter().filter(|(_, chains)| chains.len() > 1).map(|(pair, _)| pair).collect()
         };
         // One representative per contested pair (the first still-producing, not-yet-excluded
-        // candidate touching it), not every chain touching one — a full trial re-solve here reruns
+        // candidate touching it), not every chain touching one; a full trial re-solve here reruns
         // the entire coverage-packing pipeline (not cheap, unlike the LP-only marginal-exclusion
         // pass above), so this bounds the trial count by how many distinct SCARCE coverage pools
-        // are actually contested rather than by how many chains happen to touch one (confirmed
-        // needed live: without this, a scenario with many environment-gated candidates but no
-        // actual coverage-choice bug took 6.7s instead of under 1s, retrying every touching chain
-        // to no benefit).
+        // are actually contested rather than by how many chains happen to touch one, which would
+        // retry every touching chain even when a scenario has no actual coverage-choice
+        // improvement to find.
         let mut trial_candidates: Vec<&str> = contested_pairs
             .iter()
             .filter_map(|&pair| {
@@ -3147,6 +3087,7 @@ pub fn find_production_plan(
                     &test_effs,
                     facility_counts,
                     &byproduct_floors,
+                    &mut trial_count,
                 )
             else {
                 continue;
@@ -3158,6 +3099,7 @@ pub fn find_production_plan(
                 &test_coverage_bounds,
                 &byproduct_floors,
             );
+            trial_count += 1;
             let test_eff_by_name: HashMap<&str, &ProductionEfficiency> =
                 test_candidates.iter().map(|e| (e.item.name.as_str(), e)).collect();
             let test_environment =
@@ -3194,13 +3136,14 @@ pub fn find_production_plan(
     }
 
     // `candidates` has now settled (no stranded chains, and no environment-coverage exclusion left
-    // to try) — solve once more against it so `allocation`/`eff_by_name`/`grower_assignment` all
+    // to try); solve once more against it so `allocation`/`eff_by_name`/`grower_assignment` all
     // borrow from a value that lives for the rest of the function, instead of threading trial
     // values out through the borrow checker. Cheap: this problem size solves in well under a
     // millisecond. `mode_counts` and `placements` (environment coverage) were already solved above,
     // reused as-is.
     let allocation =
         solve_facility_allocation(&item_map, &candidates, facility_counts, &coverage_bounds, &byproduct_floors);
+    trial_count += 1;
     let eff_by_name: HashMap<&str, &ProductionEfficiency> =
         candidates.iter().map(|e| (e.item.name.as_str(), e)).collect();
     let environment_assignment = build_environment_assignment(&item_map, &allocation, &eff_by_name, &placements);
@@ -3221,7 +3164,7 @@ pub fn find_production_plan(
     for (&name, &continuous_rate) in &allocation {
         let rate = final_rate(name, continuous_rate);
         if rate <= 0.0 {
-            continue; // fully squeezed out by grower rounding — no income from this item after all
+            continue; // fully squeezed out by grower rounding; no income from this item after all
         }
         let eff = eff_by_name[name];
         // The frontend recomputes each row's "worth" as floor(total_units) * sell_value, so
@@ -3244,10 +3187,9 @@ pub fn find_production_plan(
         });
     }
 
-    // Facility -> every item using it, its fraction of capacity, and its rate_per_second —
-    // replaces the old `claimed_by`/`facility_leftover`/`facility_feeding_item` trio with one
+    // Facility -> every item using it, its fraction of capacity, and its rate_per_second, one
     // structure that naturally supports any number of contributors per facility. Only
-    // meaningfully used for PROCESSOR facilities below — grower facilities are reported straight
+    // meaningfully used for PROCESSOR facilities below; grower facilities are reported straight
     // from `grower_assignment` instead. By this point the exclusion loop above already guarantees
     // no processor facility has more contributors than owned units (see `build_processor_usage`'s
     // doc comment), so `coin_items` below never needs to fall back to describing an unexecutable
@@ -3265,7 +3207,7 @@ pub fn find_production_plan(
     let rate_per_second = income_streams.iter().map(|p| p.rate_per_second).sum();
 
     // Every distinct facility the user owns (count > 0), so the result can report on ALL owned
-    // facilities — including ones with nothing profitable to produce right now, not just the
+    // facilities; including ones with nothing profitable to produce right now, not just the
     // productive ones.
     let mut facility_names: Vec<&str> = items
         .iter()
@@ -3276,20 +3218,20 @@ pub fn find_production_plan(
         .collect();
     facility_names.sort_unstable();
 
-    // Wood Blocks/Mineral Sand produced as a side effect — purely informational (see doc comment
+    // Wood Blocks/Mineral Sand produced as a side effect; purely informational (see doc comment
     // on `ProductionPlan::byproduct_rates`). A byproduct only ever comes from a raw item being
-    // GROWN (every processed item's `byproduct` is always `None` — see the data loaders), so this
+    // GROWN (every processed item's `byproduct` is always `None`; see the data loaders), so this
     // only ever applies to grower facilities, credited from `grower_assignment`'s exact plot
     // counts rather than a fractional rate: a plot assigned to grow something produces its full
     // byproduct yield regardless of whether the downstream recipe it feeds ends up using all of
-    // what it grows (the residual-imprecision case noted in `final_rate`'s doc comment) — the
+    // what it grows (the residual-imprecision case noted in `final_rate`'s doc comment); the
     // byproduct comes from growing, not from what happens to the harvest afterward. Kept as a rate
     // + lead time here (not yet multiplied by any duration, since no goal is known at this point)
-    // — `time_to_reach_goal` turns these into totals once a plan's duration is known.
+    //; `time_to_reach_goal` turns these into totals once a plan's duration is known.
     //
     // Skipped entirely when `currency` itself targets a byproduct: every candidate in that mode
     // already produces exactly that resource (the filter in `calculate_efficiencies` guarantees
-    // it), so it's already the plan's PRIMARY income stream above — crediting it again here would
+    // it), so it's already the plan's PRIMARY income stream above; crediting it again here would
     // double-count the exact same total as a "bonus."
     let mut byproduct_rates: Vec<(String, f64, f64)> = Vec::new();
     if byproduct_resource_name(currency).is_none() {
@@ -3309,7 +3251,7 @@ pub fn find_production_plan(
             if count == 0 {
                 continue;
             }
-            // The key itself now names the specific item grown here — no more need to re-derive
+            // The key itself now names the specific item grown here; no more need to re-derive
             // it via a `facility_demand` lookup (see this map's doc comment on
             // `build_grower_assignment`).
             if let Some(&raw_item) = item_map.get(item_name.as_str()) {
@@ -3324,18 +3266,18 @@ pub fn find_production_plan(
         .flat_map(|&name| -> Vec<PlanStep> {
             if is_grower(name) {
                 // Authoritative: `grower_assignment` was fixed BEFORE any rate capping, as the
-                // whole-unit plot assignment everything else was derived from — not re-derived
+                // whole-unit plot assignment everything else was derived from; not re-derived
                 // here from a fractional view, so it stays exactly consistent with Total Time and
                 // the Product Breakdown even in the rare case (see `final_rate`'s doc comment)
                 // where a chain can't fully use every plot assigned to it due to a bottleneck at
                 // one of its OTHER grower facilities.
                 let total_owned = facility_counts.get_count(name);
                 // `grower_assignment`'s key now names the specific item alongside the chain (see
-                // `build_grower_assignment`'s doc comment) — a single chain can host MULTIPLE
+                // `build_grower_assignment`'s doc comment); a single chain can host MULTIPLE
                 // distinct items here (e.g. caramel_nut_chips needs walnut, chestnut, AND
                 // maple_syrup, all grown on Woodland), each getting its own row below, and a
                 // single item can equally be shared by multiple different chains (e.g. wheat sold
-                // directly and wheat used for bread) — both cases just fall out of iterating every
+                // directly and wheat used for bread); both cases just fall out of iterating every
                 // matching (chain, item) triple rather than assuming one item per chain.
                 let mut assigned: Vec<(&str, &ProductionEfficiency, u32)> = grower_assignment
                     .iter()
@@ -3374,7 +3316,7 @@ pub fn find_production_plan(
                         let reason = reason_for(eff);
                         // The item is the actual crop grown here (e.g. "rose"), which may be a
                         // different item than `eff.item` (e.g. rose_incense) when this grower
-                        // feeds a further-processed chain — so its own production_time (not
+                        // feeds a further-processed chain; so its own production_time (not
                         // `eff.item.production_time`) is what one planting cycle actually takes.
                         let cycle_time = item_map.get(*item_name).map(|item| item.production_time);
                         let environment = item_map.get(*item_name).and_then(|item| item.environment.clone());
@@ -3408,10 +3350,10 @@ pub fn find_production_plan(
             // Processor facility: a physically dedicated unit's achievable rate can only be >=
             // its share of a jointly-run one (its ceiling is a whole unit's worth of throughput,
             // not a fraction of it), so whole-unit dedication never changes any rate/total
-            // computed above — it's a pure relabeling of which unit does what. The exclusion loop
+            // computed above; it's a pure relabeling of which unit does what. The exclusion loop
             // in `find_production_plan` already guarantees no processor facility has more
             // contributors than owned units by this point (a processor can only ever be "set and
-            // left" on one recipe — see `build_processor_usage`'s doc comment), so this always
+            // left" on one recipe; see `build_processor_usage`'s doc comment), so this always
             // resolves to whole-unit dedication, never a time-share percentage.
             let mut contributors: Vec<(&ProductionEfficiency, &str, f64, f64)> =
                 facility_usage.get(name).cloned().unwrap_or_default();
@@ -3430,9 +3372,9 @@ pub fn find_production_plan(
                 }];
             }
 
-            // A player sets each physical unit to run ONE recipe and leaves it running — they
+            // A player sets each physical unit to run ONE recipe and leaves it running; they
             // don't cycle a single unit between recipes (see `build_processor_usage`'s doc
-            // comment) — so a chain needing an intermediate made at the SAME facility type as its
+            // comment); so a chain needing an intermediate made at the SAME facility type as its
             // own final item (e.g. wool_fabric also needing woolen_yarn made at Joy Wheel Loom
             // first) needs a separate dedicated unit per hop, each its own row here: the hop
             // whose item IS the chain's own final product says "Sells directly"; every other hop
@@ -3453,7 +3395,7 @@ pub fn find_production_plan(
             // the continuous LP's solution. Ceiling every contributor independently and summing
             // can still occasionally overshoot `owned` by a little (e.g. several small
             // contributors each just over a whole-unit boundary), even though the exclusion loop
-            // in `find_production_plan` already resolved genuine distinct-recipe contention — so
+            // in `find_production_plan` already resolved genuine distinct-recipe contention; so
             // rather than assume it never happens, allocate greedily in `contributors`' existing
             // most-profitable-first order and cap each grant at whatever's left, guaranteeing the
             // total never exceeds `owned` by construction instead of asserting it and risking a
@@ -3503,7 +3445,7 @@ pub fn find_production_plan(
         .collect();
 
     // Build the display-facing per-building breakdown directly from what `solve_environment_coverage`
-    // already solved — `layouts` (one entry per assigned building instance, per mode) comes
+    // already solved; `layouts` (one entry per assigned building instance, per mode) comes
     // straight out of `crate::coverage::solve_building_packing`'s own sequential per-building
     // assignment, so there's no separate re-solve needed here anymore (unlike the earlier
     // aggregate-then-decompose design).
@@ -3542,11 +3484,13 @@ pub fn find_production_plan(
         coin_items,
         byproduct_rates,
         environment_assignments,
+        candidates_evaluated: effs.len() as u32,
+        trial_solves: trial_count,
     })
 }
 
 /// Turns a [`ProductionPlan`] plus a goal amount into a concrete time-to-target, using the plan's
-/// already-computed rates — no facility-allocation re-solve, so this is cheap enough to call on
+/// already-computed rates; no facility-allocation re-solve, so this is cheap enough to call on
 /// every keystroke of a goal-amount input. Returns `None` only in the pathological case where the
 /// binary search exceeds ~317 years without reaching `target` (treated as genuinely infeasible;
 /// shouldn't happen for a `plan` returned by `find_production_plan`, whose `income_streams` always
@@ -3578,7 +3522,7 @@ pub fn time_to_reach_goal(plan: &ProductionPlan, target: f64, current: f64) -> O
     while amount_at(hi) < delta {
         hi *= 2.0;
         if hi > 1e10 {
-            // ~317 years — treat as genuinely infeasible.
+            // ~317 years; treat as genuinely infeasible.
             return None;
         }
     }
@@ -3596,7 +3540,7 @@ pub fn time_to_reach_goal(plan: &ProductionPlan, target: f64, current: f64) -> O
 
     // Fill in each income stream's actual contribution over the plan's duration, and drop any
     // that never got past their own lead time (they were claimed, but the target was reached
-    // before they produced anything) — reported per-facility in `plan.coin_items`, but not worth
+    // before they produced anything); reported per-facility in `plan.coin_items`, but not worth
     // a row in this item-level breakdown. Sorted by total worth, most valuable first.
     let mut products: Vec<PlanProduct> = plan
         .income_streams
@@ -3629,10 +3573,10 @@ pub fn time_to_reach_goal(plan: &ProductionPlan, target: f64, current: f64) -> O
     byproducts.sort_by(|a, b| a.0.cmp(&b.0));
 
     // How many times each crop actually being produced needs to be replanted over the whole
-    // duration — one seed per planting, ceiling (not floor) because a seed is already spent
+    // duration; one seed per planting, ceiling (not floor) because a seed is already spent
     // starting a cycle that might still be in progress when `total_time` is reached, even though
     // that cycle's output isn't counted as a completed unit yet (see `SeedRequirement`'s doc
-    // comment). Seeds only exist for Farmland and Woodland plots — Mineral Pile is mined (no
+    // comment). Seeds only exist for Farmland and Woodland plots; Mineral Pile is mined (no
     // seed), and the Aniimo-dispatch facilities (Nimbus Bed, Grass Blossom Mat, Starfall Hammock,
     // Tidewhisper Sandcastle, Dewy House) are harvested via family dispatch, not planted either.
     // Processor rows are skipped too: they aren't planted, so they never need seeds.

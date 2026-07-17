@@ -37,11 +37,10 @@ fn test_loaded_items_have_valid_data() {
     }
 }
 
-// quartz/quick_quartz/gem previously had their `yield` and `byproduct_yield` (Mineral Sand)
-// columns swapped in mineral_pile.csv — e.g. quartz showed yield=63 (only 4 as byproduct), when
-// the real recipe is the reverse (63 Mineral Sand, only 4 sellable quartz). That made quartz look
-// vastly more profitable than it really is. Locks in the corrected values so a future data edit
-// can't silently swap them back.
+// quartz/quick_quartz/gem are Mineral Sand-heavy recipes: most of each batch is Mineral Sand
+// byproduct, with only a small sellable quartz/gem yield (e.g. quartz yields 4, with 63 Mineral
+// Sand as byproduct). Locks in these values so a future data edit can't silently swap the
+// `yield`/`byproduct_yield` columns in mineral_pile.csv.
 #[test]
 fn test_mineral_pile_quartz_and_gem_yields_are_not_swapped_with_byproduct() {
     let data_dir = Path::new("data");

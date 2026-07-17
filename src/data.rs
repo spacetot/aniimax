@@ -169,10 +169,10 @@ pub fn load_woodland(path: &Path) -> Result<Vec<ProductionItem>, Box<dyn Error>>
 /// Expected columns: `name, sell_currency, sell_value, workload, yield, byproduct_yield, facility_level, module_requirement`
 ///
 /// `workload` is converted into an estimated production time via
-/// [`crate::models::WORKLOAD_RATE_ESTIMATE`] — see that constant's docs for the
+/// [`crate::models::WORKLOAD_RATE_ESTIMATE`]; see that constant's docs for the
 /// (currently single-data-point) calibration this is based on.
 ///
-/// Shared by any "raw material, no cost, Aniimo-family/workload-driven" facility — currently
+/// Shared by any "raw material, no cost, Aniimo-family/workload-driven" facility; currently
 /// Mineral Pile and Grass Blossom Mat, since both follow the same CSV shape.
 pub fn load_workload_raw_material(
     path: &Path,
@@ -217,42 +217,34 @@ pub fn load_mineral_pile(path: &Path) -> Result<Vec<ProductionItem>, Box<dyn Err
 
 /// Loads Grass Blossom Mat data (thin wrapper over [`load_workload_raw_material`]).
 ///
-/// Facility level and byproduct are not yet confirmed for this brand-new facility — see
-/// `BETA_NOTES.md` section 12. `byproduct_name` is a placeholder ("Mineral Sand") that will
-/// only take effect if `byproduct_yield` is ever populated in the CSV.
+/// Facility level and byproduct are not yet confirmed for this facility. `byproduct_name` is a
+/// placeholder ("Mineral Sand") that will only take effect if `byproduct_yield` is ever
+/// populated in the CSV.
 pub fn load_grass_blossom_mat(path: &Path) -> Result<Vec<ProductionItem>, Box<dyn Error>> {
     load_workload_raw_material(path, "Grass Blossom Mat", "Mineral Sand")
 }
 
 /// Loads Tidewhisper Sandcastle data (thin wrapper over [`load_workload_raw_material`]).
 ///
-/// Facility level guessed as 1 (unconfirmed) — see `BETA_NOTES.md` section 19. Every item here
-/// requires a growing environment (pearl/quick_pearl: Cool, love_bubble: Freeze) — tracked via
-/// `environment`, but NOT yet enforced as a capacity constraint like Farmland/Woodland are
-/// (see `crate::optimizer::solve_facility_allocation`): no environment-building coverage numbers
-/// have been confirmed for this facility type, only for Farmland (24/unit) and Woodland
-/// (12/unit). `quick_pearl` itself is not yet in the CSV — its stats
-/// (sell_value/workload/yield/byproduct) aren't confirmed either.
+/// Facility level guessed as 1 (unconfirmed). Every item here requires a growing environment
+/// (pearl/quick_pearl: Cool, love_bubble: Freeze); tracked via `environment` and capacity-gated
+/// by owned environment buildings, see `crate::coverage`.
 pub fn load_tidewhisper_sandcastle(path: &Path) -> Result<Vec<ProductionItem>, Box<dyn Error>> {
     load_workload_raw_material(path, "Tidewhisper Sandcastle", "Mineral Sand")
 }
 
 /// Loads Starfall Hammock data (thin wrapper over [`load_workload_raw_material`]).
 ///
-/// Facility level guessed as 1 (unconfirmed) — see `BETA_NOTES.md` section 19. Requires a
-/// "Cool" growing environment — tracked via `environment`, but not yet enforced as a capacity
-/// constraint (no environment-building coverage numbers confirmed for this facility type; only
-/// Farmland/Woodland are, see `crate::optimizer::solve_facility_allocation`).
+/// Facility level guessed as 1 (unconfirmed). Requires a "Cool" growing environment; tracked via
+/// `environment` and capacity-gated by owned environment buildings, see `crate::coverage`.
 pub fn load_starfall_hammock(path: &Path) -> Result<Vec<ProductionItem>, Box<dyn Error>> {
     load_workload_raw_material(path, "Starfall Hammock", "Mineral Sand")
 }
 
 /// Loads Dewy House data (thin wrapper over [`load_workload_raw_material`]).
 ///
-/// Facility level guessed as 1 (unconfirmed) — see `BETA_NOTES.md` section 19. Requires a
-/// "Warm" growing environment — tracked via `environment`, but not yet enforced as a capacity
-/// constraint (no environment-building coverage numbers confirmed for this facility type; only
-/// Farmland/Woodland are, see `crate::optimizer::solve_facility_allocation`).
+/// Facility level guessed as 1 (unconfirmed). Requires a "Warm" growing environment; tracked via
+/// `environment` and capacity-gated by owned environment buildings, see `crate::coverage`.
 pub fn load_dewy_house(path: &Path) -> Result<Vec<ProductionItem>, Box<dyn Error>> {
     load_workload_raw_material(path, "Dewy House", "Mineral Sand")
 }
@@ -422,8 +414,8 @@ pub fn load_nimbus_bed(path: &Path) -> Result<Vec<ProductionItem>, Box<dyn Error
 /// - Processing: Carousel Mill, Jukebox Dryer, Claw Game Cooker, Crafting Table,
 ///   Phonolfactory Table, Bouncy Brew Keg, Joy Wheel Loom
 ///
-/// (Dance Pad Polisher and Aniipod Maker were removed — user confirmed they don't produce
-/// coins/Bud Tickets in the new beta, so they're out of scope for this optimizer.)
+/// (Dance Pad Polisher and Aniipod Maker are excluded: they don't produce coins/Bud Tickets, so
+/// they're out of scope for this optimizer.)
 ///
 /// # Arguments
 ///

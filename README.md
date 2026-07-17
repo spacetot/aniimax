@@ -2,7 +2,7 @@
 
 A command-line tool, Rust library, and **web application** for optimizing production paths in Aniimo Homeland. Calculate the fastest way to produce your target amount of Homeland currency, and see what every facility you own should be doing at once.
 
-This is a fork of [aebii's original Aniimax](https://github.com/ae-bii/aniimax), updated for the current beta with new facilities, Bud Tickets support, and a rebuilt facility-allocation engine for the web app (the CLI still uses the original approach — see [How the Optimization Works](#how-the-optimization-works) for the difference).
+This is a fork of [aebii's original Aniimax](https://github.com/ae-bii/aniimax), updated for the current beta with new facilities, Bud Tickets support, and a rebuilt facility-allocation engine for the web app (the CLI still uses the original approach; see [How the Optimization Works](#how-the-optimization-works) for the difference).
 
 > **Note:** This project is a work in progress. Not all in-game items are included yet, and production times are assumed to match the values displayed in-game.
 
@@ -13,10 +13,10 @@ This is a fork of [aebii's original Aniimax](https://github.com/ae-bii/aniimax),
 ## Features
 
 **Web app**
-- **Live Production Plan**: Set your facilities and currency to get the best achievable rate and what every facility should produce — no target amount needed
+- **Live Production Plan**: Set your facilities and currency to get the best achievable rate and what every facility should produce; no target amount needed
 - **Goal Timing**: Add a target amount afterward to see how long it'll take; updates instantly as you type, no re-solving
 - **Joint Facility Allocation**: Solves for every item and every facility at once, so shared resources (e.g. two recipes both wanting the same Farmland soybean supply) are split correctly instead of double-counted
-- **Whole-Unit Realism**: Growers are rounded to whole plots, processors are dedicated to one recipe each — matching how the game actually works, never a fractional or time-shared facility
+- **Whole-Unit Realism**: Growers are rounded to whole plots, processors are dedicated to one recipe each, matching how the game actually works, never a fractional or time-shared facility
 - **Multi-Currency Support**: Optimize for Coins or Bud Tickets
 - **Recipe Reference Page**: Every recipe in the game data, browsable by facility, independent of what you own
 - **Item Upgrade Modules**: Support for module-unlocked items (ecological, kitchen, mineral, crafting)
@@ -80,7 +80,7 @@ cargo run --release -- --target 5000 --currency coins \
 
 ### Energy Optimization
 
-Pure profit-per-energy ranking exists at the library level (`find_best_production_path(&efficiencies, target, true, 0.0, &counts)`) but isn't currently wired up to a CLI flag — the CLI always ranks by time.
+Pure profit-per-energy ranking exists at the library level (`find_best_production_path(&efficiencies, target, true, 0.0, &counts)`) but isn't currently wired up to a CLI flag; the CLI always ranks by time.
 
 ### With Energy Cost
 
@@ -186,7 +186,7 @@ The web app and the CLI/library use two different approaches to the same underly
 
 The web app (`find_plan`, backed by `find_production_plan`) solves a harder version of the problem than "what's the single best item": it solves for what *every* owned facility should be doing at once, including facilities that multiple recipes want to share.
 
-**1. Profit per item.** For every item, net profit per batch, plus its utilization (batches/sec needed) at every facility touched anywhere in its ingredient chain — not just its own facility, but every intermediate processing step too.
+**1. Profit per item.** For every item, net profit per batch, plus its utilization (batches/sec needed) at every facility touched anywhere in its ingredient chain, not just its own facility, but every intermediate processing step too.
 
 ```math
 \text{profit}_{\text{batch}} = (\text{yield} \times \text{sell\_price}) - \text{raw\_cost}
@@ -198,10 +198,10 @@ The web app (`find_plan`, backed by `find_production_plan`) solves a harder vers
 \max \sum_i \text{profit}_{\text{batch},i} \cdot x_i \quad \text{s.t.} \quad \sum_i \text{utilization}_{i,f} \cdot x_i \leq \text{capacity}_f \ \ \forall f
 ```
 
-**3. Rounding to whole units.** The LP's solution is continuous (e.g. "62% of Farmland grows soybean"), which isn't achievable in-game — plots and machines can't be fractionally split. The result is rounded differently depending on facility type:
+**3. Rounding to whole units.** The LP's solution is continuous (e.g. "62% of Farmland grows soybean"), which isn't achievable in-game; plots and machines can't be fractionally split. The result is rounded differently depending on facility type:
 
 - **Growers** (Farmland, Woodland, Mineral Pile, ...): each plot commits to one crop for a full cycle, so fractional shares are converted to whole counts via the largest-remainder method (the same apportionment technique used to allocate parliament seats).
-- **Processors** (Carousel Mill, Claw Game Cooker, ...): a machine can't time-share between two recipes either — a player sets it to run one recipe continuously. When more recipes want a processor than it has units, the most profitable candidates each get one dedicated unit and the rest are excluded, then the LP re-solves so their freed-up supply finds a real next-best use instead of sitting idle.
+- **Processors** (Carousel Mill, Claw Game Cooker, ...): a machine can't time-share between two recipes either; a player sets it to run one recipe continuously. When more recipes want a processor than it has units, the most profitable candidates each get one dedicated unit and the rest are excluded, then the LP re-solves so their freed-up supply finds a real next-best use instead of sitting idle.
 
 **4. Time to reach a goal.** Once the plan is settled, each item contributes nothing until its own lead time has passed, then its steady rate. The time to reach a target amount is found with a binary search rather than solved for directly, since accumulated amount is monotonic in time:
 
@@ -213,7 +213,7 @@ See the "math" button in the web app's header for this same explanation in conte
 
 ### CLI / Library: Greedy Path Selection
 
-The CLI and library functions (`find_best_production_path`, `find_parallel_production_path`) use a greedy algorithm instead of the web app's joint solve — ranking items independently rather than solving for shared facilities at once. Here's how it works:
+The CLI and library functions (`find_best_production_path`, `find_parallel_production_path`) use a greedy algorithm instead of the web app's joint solve, ranking items independently rather than solving for shared facilities at once. Here's how it works:
 
 ### 1. Efficiency Calculation
 
@@ -460,7 +460,7 @@ Adding more farms increases the gathering rate until it matches or exceeds the p
 
 ### Computational Complexity
 
-The table below describes the CLI/library's greedy functions above, not the web app's linear program (LP solve time depends on the solver and isn't a simple closed form, but is fast in practice — well under a second for the current item count).
+The table below describes the CLI/library's greedy functions above, not the web app's linear program (LP solve time depends on the solver and isn't a simple closed form, but is fast in practice, well under a second for the current item count).
 
 Let $n$ = number of production items, $m$ = maximum chain depth, $f$ = facilities per chain, $k$ = selected parallel chains, $F$ = facility count, $M$ = number of materials in a recipe.
 
@@ -590,11 +590,9 @@ src/
 data/
   *.csv              - Production data files
 web/
-  index.html         - Optimizer page (facility plan + goal timing)
-  facilities.html    - Recipe reference page
-  facility-config.js - Shared facility list/categories, imported by both pages
-  app.js             - Optimizer page logic
-  facilities.js      - Recipe reference page logic
+  index.html         - Optimizer page (facility plan, goal timing, math/help/facilities modals)
+  facility-config.js - Shared facility list/categories
+  app.js             - Page logic, including the facility recipe reference modal
   style.css          - Styling
   pkg/               - Built WASM module (generated)
 tests/
