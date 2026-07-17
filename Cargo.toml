@@ -1,6 +1,6 @@
 [package]
 name = "aniimax"
-version = "0.14.1"
+version = "0.15.0"
 edition = "2021"
 description = "Production path optimizer for Aniimo Homeland"
 repository = "https://github.com/ae-bii/aniimax"
