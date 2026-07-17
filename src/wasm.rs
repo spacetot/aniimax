@@ -192,26 +192,24 @@ fn get_embedded_items() -> Vec<ProductionItem> {
     let mut rdr = ReaderBuilder::new()
         .trim(csv::Trim::All)
         .from_reader(farmland_data.as_bytes());
-    for result in rdr.deserialize::<crate::models::FarmlandRow>() {
-        if let Ok(row) = result {
-            items.push(ProductionItem {
-                name: row.name,
-                facility: "Farmland".to_string(),
-                raw_materials: None,
-                required_amount: None,
-                cost: Some(row.cost),
-                sell_currency: "coins".to_string(),
-                sell_value: row.sell_value,
-                production_time: row.production_time,
-                yield_amount: row.yield_amount,
-                energy: row.energy,
-                facility_level: row.facility_level,
-                module_requirement: parse_module_requirement(&row.module_requirement),
-                workload: None,
-                byproduct: None,
-                environment: row.environment,
-            });
-        }
+    for row in rdr.deserialize::<crate::models::FarmlandRow>().flatten() {
+        items.push(ProductionItem {
+            name: row.name,
+            facility: "Farmland".to_string(),
+            raw_materials: None,
+            required_amount: None,
+            cost: Some(row.cost),
+            sell_currency: "coins".to_string(),
+            sell_value: row.sell_value,
+            production_time: row.production_time,
+            yield_amount: row.yield_amount,
+            energy: row.energy,
+            facility_level: row.facility_level,
+            module_requirement: parse_module_requirement(&row.module_requirement),
+            workload: None,
+            byproduct: None,
+            environment: row.environment,
+        });
     }
 
     // Woodland items
@@ -219,31 +217,29 @@ fn get_embedded_items() -> Vec<ProductionItem> {
     let mut rdr = ReaderBuilder::new()
         .trim(csv::Trim::All)
         .from_reader(woodland_data.as_bytes());
-    for result in rdr.deserialize::<crate::models::WoodlandRow>() {
-        if let Ok(row) = result {
-            let energy = row.energy.and_then(|e| {
-                if e == "NULL" { None } else { e.parse().ok() }
-            });
-            items.push(ProductionItem {
-                name: row.name,
-                facility: "Woodland".to_string(),
-                raw_materials: None,
-                required_amount: None,
-                cost: Some(row.cost),
-                sell_currency: row.sell_currency,
-                sell_value: row.sell_value,
-                production_time: row.production_time,
-                yield_amount: row.yield_amount,
-                energy,
-                facility_level: row.facility_level,
-                module_requirement: parse_module_requirement(&row.module_requirement),
-                workload: None,
-                byproduct: row
-                    .byproduct_yield
-                    .map(|amt| ("Wood Blocks".to_string(), amt)),
-                environment: row.environment,
-            });
-        }
+    for row in rdr.deserialize::<crate::models::WoodlandRow>().flatten() {
+        let energy = row.energy.and_then(|e| {
+            if e == "NULL" { None } else { e.parse().ok() }
+        });
+        items.push(ProductionItem {
+            name: row.name,
+            facility: "Woodland".to_string(),
+            raw_materials: None,
+            required_amount: None,
+            cost: Some(row.cost),
+            sell_currency: row.sell_currency,
+            sell_value: row.sell_value,
+            production_time: row.production_time,
+            yield_amount: row.yield_amount,
+            energy,
+            facility_level: row.facility_level,
+            module_requirement: parse_module_requirement(&row.module_requirement),
+            workload: None,
+            byproduct: row
+                .byproduct_yield
+                .map(|amt| ("Wood Blocks".to_string(), amt)),
+            environment: row.environment,
+        });
     }
 
     // Mineral Pile items (workload-based; production_time derived via MINERAL_PILE_WORKLOAD_RATE)
@@ -251,28 +247,26 @@ fn get_embedded_items() -> Vec<ProductionItem> {
     let mut rdr = ReaderBuilder::new()
         .trim(csv::Trim::All)
         .from_reader(mineral_data.as_bytes());
-    for result in rdr.deserialize::<crate::models::MineralRow>() {
-        if let Ok(row) = result {
-            items.push(ProductionItem {
-                name: row.name,
-                facility: "Mineral Pile".to_string(),
-                raw_materials: None,
-                required_amount: None,
-                cost: None,
-                sell_currency: row.sell_currency,
-                sell_value: row.sell_value,
-                production_time: row.workload / crate::models::WORKLOAD_RATE_ESTIMATE,
-                yield_amount: row.yield_amount,
-                energy: None,
-                facility_level: row.facility_level,
-                module_requirement: parse_module_requirement(&row.module_requirement),
-                workload: Some(row.workload),
-                byproduct: row
-                    .byproduct_yield
-                    .map(|amt| ("Mineral Sand".to_string(), amt)),
-                environment: row.environment,
-            });
-        }
+    for row in rdr.deserialize::<crate::models::MineralRow>().flatten() {
+        items.push(ProductionItem {
+            name: row.name,
+            facility: "Mineral Pile".to_string(),
+            raw_materials: None,
+            required_amount: None,
+            cost: None,
+            sell_currency: row.sell_currency,
+            sell_value: row.sell_value,
+            production_time: row.workload / crate::models::WORKLOAD_RATE_ESTIMATE,
+            yield_amount: row.yield_amount,
+            energy: None,
+            facility_level: row.facility_level,
+            module_requirement: parse_module_requirement(&row.module_requirement),
+            workload: Some(row.workload),
+            byproduct: row
+                .byproduct_yield
+                .map(|amt| ("Mineral Sand".to_string(), amt)),
+            environment: row.environment,
+        });
     }
 
     // Grass Blossom Mat items (same CSV shape as Mineral Pile; facility level/byproduct
@@ -281,28 +275,26 @@ fn get_embedded_items() -> Vec<ProductionItem> {
     let mut rdr = ReaderBuilder::new()
         .trim(csv::Trim::All)
         .from_reader(grass_blossom_data.as_bytes());
-    for result in rdr.deserialize::<crate::models::MineralRow>() {
-        if let Ok(row) = result {
-            items.push(ProductionItem {
-                name: row.name,
-                facility: "Grass Blossom Mat".to_string(),
-                raw_materials: None,
-                required_amount: None,
-                cost: None,
-                sell_currency: row.sell_currency,
-                sell_value: row.sell_value,
-                production_time: row.workload / crate::models::WORKLOAD_RATE_ESTIMATE,
-                yield_amount: row.yield_amount,
-                energy: None,
-                facility_level: row.facility_level,
-                module_requirement: parse_module_requirement(&row.module_requirement),
-                workload: Some(row.workload),
-                byproduct: row
-                    .byproduct_yield
-                    .map(|amt| ("Mineral Sand".to_string(), amt)),
-                environment: row.environment,
-            });
-        }
+    for row in rdr.deserialize::<crate::models::MineralRow>().flatten() {
+        items.push(ProductionItem {
+            name: row.name,
+            facility: "Grass Blossom Mat".to_string(),
+            raw_materials: None,
+            required_amount: None,
+            cost: None,
+            sell_currency: row.sell_currency,
+            sell_value: row.sell_value,
+            production_time: row.workload / crate::models::WORKLOAD_RATE_ESTIMATE,
+            yield_amount: row.yield_amount,
+            energy: None,
+            facility_level: row.facility_level,
+            module_requirement: parse_module_requirement(&row.module_requirement),
+            workload: Some(row.workload),
+            byproduct: row
+                .byproduct_yield
+                .map(|amt| ("Mineral Sand".to_string(), amt)),
+            environment: row.environment,
+        });
     }
 
     // Tidewhisper Sandcastle items (facility level guessed as 1; requires Cool/Freeze growing
@@ -311,28 +303,26 @@ fn get_embedded_items() -> Vec<ProductionItem> {
     let mut rdr = ReaderBuilder::new()
         .trim(csv::Trim::All)
         .from_reader(tidewhisper_data.as_bytes());
-    for result in rdr.deserialize::<crate::models::MineralRow>() {
-        if let Ok(row) = result {
-            items.push(ProductionItem {
-                name: row.name,
-                facility: "Tidewhisper Sandcastle".to_string(),
-                raw_materials: None,
-                required_amount: None,
-                cost: None,
-                sell_currency: row.sell_currency,
-                sell_value: row.sell_value,
-                production_time: row.workload / crate::models::WORKLOAD_RATE_ESTIMATE,
-                yield_amount: row.yield_amount,
-                energy: None,
-                facility_level: row.facility_level,
-                module_requirement: parse_module_requirement(&row.module_requirement),
-                workload: Some(row.workload),
-                byproduct: row
-                    .byproduct_yield
-                    .map(|amt| ("Mineral Sand".to_string(), amt)),
-                environment: row.environment,
-            });
-        }
+    for row in rdr.deserialize::<crate::models::MineralRow>().flatten() {
+        items.push(ProductionItem {
+            name: row.name,
+            facility: "Tidewhisper Sandcastle".to_string(),
+            raw_materials: None,
+            required_amount: None,
+            cost: None,
+            sell_currency: row.sell_currency,
+            sell_value: row.sell_value,
+            production_time: row.workload / crate::models::WORKLOAD_RATE_ESTIMATE,
+            yield_amount: row.yield_amount,
+            energy: None,
+            facility_level: row.facility_level,
+            module_requirement: parse_module_requirement(&row.module_requirement),
+            workload: Some(row.workload),
+            byproduct: row
+                .byproduct_yield
+                .map(|amt| ("Mineral Sand".to_string(), amt)),
+            environment: row.environment,
+        });
     }
 
     // Starfall Hammock items (facility level guessed as 1; requires Cool growing environment,
@@ -341,28 +331,26 @@ fn get_embedded_items() -> Vec<ProductionItem> {
     let mut rdr = ReaderBuilder::new()
         .trim(csv::Trim::All)
         .from_reader(starfall_data.as_bytes());
-    for result in rdr.deserialize::<crate::models::MineralRow>() {
-        if let Ok(row) = result {
-            items.push(ProductionItem {
-                name: row.name,
-                facility: "Starfall Hammock".to_string(),
-                raw_materials: None,
-                required_amount: None,
-                cost: None,
-                sell_currency: row.sell_currency,
-                sell_value: row.sell_value,
-                production_time: row.workload / crate::models::WORKLOAD_RATE_ESTIMATE,
-                yield_amount: row.yield_amount,
-                energy: None,
-                facility_level: row.facility_level,
-                module_requirement: parse_module_requirement(&row.module_requirement),
-                workload: Some(row.workload),
-                byproduct: row
-                    .byproduct_yield
-                    .map(|amt| ("Mineral Sand".to_string(), amt)),
-                environment: row.environment,
-            });
-        }
+    for row in rdr.deserialize::<crate::models::MineralRow>().flatten() {
+        items.push(ProductionItem {
+            name: row.name,
+            facility: "Starfall Hammock".to_string(),
+            raw_materials: None,
+            required_amount: None,
+            cost: None,
+            sell_currency: row.sell_currency,
+            sell_value: row.sell_value,
+            production_time: row.workload / crate::models::WORKLOAD_RATE_ESTIMATE,
+            yield_amount: row.yield_amount,
+            energy: None,
+            facility_level: row.facility_level,
+            module_requirement: parse_module_requirement(&row.module_requirement),
+            workload: Some(row.workload),
+            byproduct: row
+                .byproduct_yield
+                .map(|amt| ("Mineral Sand".to_string(), amt)),
+            environment: row.environment,
+        });
     }
 
     // Dewy House items (facility level guessed as 1; requires Warm growing environment, not yet
@@ -371,28 +359,26 @@ fn get_embedded_items() -> Vec<ProductionItem> {
     let mut rdr = ReaderBuilder::new()
         .trim(csv::Trim::All)
         .from_reader(dewy_data.as_bytes());
-    for result in rdr.deserialize::<crate::models::MineralRow>() {
-        if let Ok(row) = result {
-            items.push(ProductionItem {
-                name: row.name,
-                facility: "Dewy House".to_string(),
-                raw_materials: None,
-                required_amount: None,
-                cost: None,
-                sell_currency: row.sell_currency,
-                sell_value: row.sell_value,
-                production_time: row.workload / crate::models::WORKLOAD_RATE_ESTIMATE,
-                yield_amount: row.yield_amount,
-                energy: None,
-                facility_level: row.facility_level,
-                module_requirement: parse_module_requirement(&row.module_requirement),
-                workload: Some(row.workload),
-                byproduct: row
-                    .byproduct_yield
-                    .map(|amt| ("Mineral Sand".to_string(), amt)),
-                environment: row.environment,
-            });
-        }
+    for row in rdr.deserialize::<crate::models::MineralRow>().flatten() {
+        items.push(ProductionItem {
+            name: row.name,
+            facility: "Dewy House".to_string(),
+            raw_materials: None,
+            required_amount: None,
+            cost: None,
+            sell_currency: row.sell_currency,
+            sell_value: row.sell_value,
+            production_time: row.workload / crate::models::WORKLOAD_RATE_ESTIMATE,
+            yield_amount: row.yield_amount,
+            energy: None,
+            facility_level: row.facility_level,
+            module_requirement: parse_module_requirement(&row.module_requirement),
+            workload: Some(row.workload),
+            byproduct: row
+                .byproduct_yield
+                .map(|amt| ("Mineral Sand".to_string(), amt)),
+            environment: row.environment,
+        });
     }
 
     // Carousel Mill items
@@ -400,36 +386,34 @@ fn get_embedded_items() -> Vec<ProductionItem> {
     let mut rdr = ReaderBuilder::new()
         .trim(csv::Trim::All)
         .from_reader(carousel_data.as_bytes());
-    for result in rdr.deserialize::<crate::models::ProcessingRowWithEnergy>() {
-        if let Ok(row) = result {
-            let raw_mats = parse_raw_materials(&row.raw_materials);
-            let req_amounts = parse_required_amounts(&row.required_amount);
-            let production_time = row
-                .workload
-                .map(|w| w / crate::models::WORKLOAD_RATE_ESTIMATE)
-                .or(row.production_time)
-                .expect("row must have either workload or production_time");
-            items.push(ProductionItem {
-                name: row.name,
-                facility: "Carousel Mill".to_string(),
-                raw_materials: Some(raw_mats),
-                required_amount: Some(req_amounts),
-                cost: None,
-                sell_currency: row
-                    .sell_currency
-                    .clone()
-                    .unwrap_or_else(|| "coins".to_string()),
-                sell_value: row.sell_value,
-                production_time,
-                yield_amount: 1,
-                energy: row.energy,
-                facility_level: row.facility_level,
-                module_requirement: parse_module_requirement(&row.module_requirement),
-                workload: row.workload,
-                byproduct: None,
-                environment: None,
-            });
-        }
+    for row in rdr.deserialize::<crate::models::ProcessingRowWithEnergy>().flatten() {
+        let raw_mats = parse_raw_materials(&row.raw_materials);
+        let req_amounts = parse_required_amounts(&row.required_amount);
+        let production_time = row
+            .workload
+            .map(|w| w / crate::models::WORKLOAD_RATE_ESTIMATE)
+            .or(row.production_time)
+            .expect("row must have either workload or production_time");
+        items.push(ProductionItem {
+            name: row.name,
+            facility: "Carousel Mill".to_string(),
+            raw_materials: Some(raw_mats),
+            required_amount: Some(req_amounts),
+            cost: None,
+            sell_currency: row
+                .sell_currency
+                .clone()
+                .unwrap_or_else(|| "coins".to_string()),
+            sell_value: row.sell_value,
+            production_time,
+            yield_amount: 1,
+            energy: row.energy,
+            facility_level: row.facility_level,
+            module_requirement: parse_module_requirement(&row.module_requirement),
+            workload: row.workload,
+            byproduct: None,
+            environment: None,
+        });
     }
 
     // Jukebox Dryer items
@@ -437,36 +421,34 @@ fn get_embedded_items() -> Vec<ProductionItem> {
     let mut rdr = ReaderBuilder::new()
         .trim(csv::Trim::All)
         .from_reader(jukebox_data.as_bytes());
-    for result in rdr.deserialize::<crate::models::ProcessingRowWithEnergy>() {
-        if let Ok(row) = result {
-            let raw_mats = parse_raw_materials(&row.raw_materials);
-            let req_amounts = parse_required_amounts(&row.required_amount);
-            let production_time = row
-                .workload
-                .map(|w| w / crate::models::WORKLOAD_RATE_ESTIMATE)
-                .or(row.production_time)
-                .expect("row must have either workload or production_time");
-            items.push(ProductionItem {
-                name: row.name,
-                facility: "Jukebox Dryer".to_string(),
-                raw_materials: Some(raw_mats),
-                required_amount: Some(req_amounts),
-                cost: None,
-                sell_currency: row
-                    .sell_currency
-                    .clone()
-                    .unwrap_or_else(|| "coins".to_string()),
-                sell_value: row.sell_value,
-                production_time,
-                yield_amount: 1,
-                energy: row.energy,
-                facility_level: row.facility_level,
-                module_requirement: parse_module_requirement(&row.module_requirement),
-                workload: row.workload,
-                byproduct: None,
-                environment: None,
-            });
-        }
+    for row in rdr.deserialize::<crate::models::ProcessingRowWithEnergy>().flatten() {
+        let raw_mats = parse_raw_materials(&row.raw_materials);
+        let req_amounts = parse_required_amounts(&row.required_amount);
+        let production_time = row
+            .workload
+            .map(|w| w / crate::models::WORKLOAD_RATE_ESTIMATE)
+            .or(row.production_time)
+            .expect("row must have either workload or production_time");
+        items.push(ProductionItem {
+            name: row.name,
+            facility: "Jukebox Dryer".to_string(),
+            raw_materials: Some(raw_mats),
+            required_amount: Some(req_amounts),
+            cost: None,
+            sell_currency: row
+                .sell_currency
+                .clone()
+                .unwrap_or_else(|| "coins".to_string()),
+            sell_value: row.sell_value,
+            production_time,
+            yield_amount: 1,
+            energy: row.energy,
+            facility_level: row.facility_level,
+            module_requirement: parse_module_requirement(&row.module_requirement),
+            workload: row.workload,
+            byproduct: None,
+            environment: None,
+        });
     }
 
     // Claw Game Cooker items
@@ -474,36 +456,34 @@ fn get_embedded_items() -> Vec<ProductionItem> {
     let mut rdr = ReaderBuilder::new()
         .trim(csv::Trim::All)
         .from_reader(claw_data.as_bytes());
-    for result in rdr.deserialize::<crate::models::ProcessingRowWithEnergy>() {
-        if let Ok(row) = result {
-            let raw_mats = parse_raw_materials(&row.raw_materials);
-            let req_amounts = parse_required_amounts(&row.required_amount);
-            let production_time = row
-                .workload
-                .map(|w| w / crate::models::WORKLOAD_RATE_ESTIMATE)
-                .or(row.production_time)
-                .expect("row must have either workload or production_time");
-            items.push(ProductionItem {
-                name: row.name,
-                facility: "Claw Game Cooker".to_string(),
-                raw_materials: Some(raw_mats),
-                required_amount: Some(req_amounts),
-                cost: None,
-                sell_currency: row
-                    .sell_currency
-                    .clone()
-                    .unwrap_or_else(|| "coins".to_string()),
-                sell_value: row.sell_value,
-                production_time,
-                yield_amount: 1,
-                energy: row.energy,
-                facility_level: row.facility_level,
-                module_requirement: parse_module_requirement(&row.module_requirement),
-                workload: row.workload,
-                byproduct: None,
-                environment: None,
-            });
-        }
+    for row in rdr.deserialize::<crate::models::ProcessingRowWithEnergy>().flatten() {
+        let raw_mats = parse_raw_materials(&row.raw_materials);
+        let req_amounts = parse_required_amounts(&row.required_amount);
+        let production_time = row
+            .workload
+            .map(|w| w / crate::models::WORKLOAD_RATE_ESTIMATE)
+            .or(row.production_time)
+            .expect("row must have either workload or production_time");
+        items.push(ProductionItem {
+            name: row.name,
+            facility: "Claw Game Cooker".to_string(),
+            raw_materials: Some(raw_mats),
+            required_amount: Some(req_amounts),
+            cost: None,
+            sell_currency: row
+                .sell_currency
+                .clone()
+                .unwrap_or_else(|| "coins".to_string()),
+            sell_value: row.sell_value,
+            production_time,
+            yield_amount: 1,
+            energy: row.energy,
+            facility_level: row.facility_level,
+            module_requirement: parse_module_requirement(&row.module_requirement),
+            workload: row.workload,
+            byproduct: None,
+            environment: None,
+        });
     }
 
     // Crafting Table items
@@ -511,36 +491,34 @@ fn get_embedded_items() -> Vec<ProductionItem> {
     let mut rdr = ReaderBuilder::new()
         .trim(csv::Trim::All)
         .from_reader(crafting_data.as_bytes());
-    for result in rdr.deserialize::<crate::models::ProcessingRowNoEnergy>() {
-        if let Ok(row) = result {
-            let raw_mats = parse_raw_materials(&row.raw_materials);
-            let req_amounts = parse_required_amounts(&row.required_amount);
-            let production_time = row
-                .workload
-                .map(|w| w / crate::models::WORKLOAD_RATE_ESTIMATE)
-                .or(row.production_time)
-                .expect("row must have either workload or production_time");
-            items.push(ProductionItem {
-                name: row.name,
-                facility: "Crafting Table".to_string(),
-                raw_materials: Some(raw_mats),
-                required_amount: Some(req_amounts),
-                cost: None,
-                sell_currency: row
-                    .sell_currency
-                    .clone()
-                    .unwrap_or_else(|| "coins".to_string()),
-                sell_value: row.sell_value,
-                production_time,
-                yield_amount: 1,
-                energy: None,
-                facility_level: row.facility_level,
-                module_requirement: parse_module_requirement(&row.module_requirement),
-                workload: row.workload,
-                byproduct: None,
-                environment: None,
-            });
-        }
+    for row in rdr.deserialize::<crate::models::ProcessingRowNoEnergy>().flatten() {
+        let raw_mats = parse_raw_materials(&row.raw_materials);
+        let req_amounts = parse_required_amounts(&row.required_amount);
+        let production_time = row
+            .workload
+            .map(|w| w / crate::models::WORKLOAD_RATE_ESTIMATE)
+            .or(row.production_time)
+            .expect("row must have either workload or production_time");
+        items.push(ProductionItem {
+            name: row.name,
+            facility: "Crafting Table".to_string(),
+            raw_materials: Some(raw_mats),
+            required_amount: Some(req_amounts),
+            cost: None,
+            sell_currency: row
+                .sell_currency
+                .clone()
+                .unwrap_or_else(|| "coins".to_string()),
+            sell_value: row.sell_value,
+            production_time,
+            yield_amount: 1,
+            energy: None,
+            facility_level: row.facility_level,
+            module_requirement: parse_module_requirement(&row.module_requirement),
+            workload: row.workload,
+            byproduct: None,
+            environment: None,
+        });
     }
 
     // Note: Dance Pad Polisher and Aniipod Maker are excluded: they don't produce coins/Bud
@@ -551,36 +529,34 @@ fn get_embedded_items() -> Vec<ProductionItem> {
     let mut rdr = ReaderBuilder::new()
         .trim(csv::Trim::All)
         .from_reader(phono_data.as_bytes());
-    for result in rdr.deserialize::<crate::models::ProcessingRowNoEnergy>() {
-        if let Ok(row) = result {
-            let raw_mats = parse_raw_materials(&row.raw_materials);
-            let req_amounts = parse_required_amounts(&row.required_amount);
-            let production_time = row
-                .workload
-                .map(|w| w / crate::models::WORKLOAD_RATE_ESTIMATE)
-                .or(row.production_time)
-                .expect("row must have either workload or production_time");
-            items.push(ProductionItem {
-                name: row.name,
-                facility: "Phonolfactory Table".to_string(),
-                raw_materials: Some(raw_mats),
-                required_amount: Some(req_amounts),
-                cost: None,
-                sell_currency: row
-                    .sell_currency
-                    .clone()
-                    .unwrap_or_else(|| "coins".to_string()),
-                sell_value: row.sell_value,
-                production_time,
-                yield_amount: 1,
-                energy: None,
-                facility_level: row.facility_level,
-                module_requirement: parse_module_requirement(&row.module_requirement),
-                workload: row.workload,
-                byproduct: None,
-                environment: None,
-            });
-        }
+    for row in rdr.deserialize::<crate::models::ProcessingRowNoEnergy>().flatten() {
+        let raw_mats = parse_raw_materials(&row.raw_materials);
+        let req_amounts = parse_required_amounts(&row.required_amount);
+        let production_time = row
+            .workload
+            .map(|w| w / crate::models::WORKLOAD_RATE_ESTIMATE)
+            .or(row.production_time)
+            .expect("row must have either workload or production_time");
+        items.push(ProductionItem {
+            name: row.name,
+            facility: "Phonolfactory Table".to_string(),
+            raw_materials: Some(raw_mats),
+            required_amount: Some(req_amounts),
+            cost: None,
+            sell_currency: row
+                .sell_currency
+                .clone()
+                .unwrap_or_else(|| "coins".to_string()),
+            sell_value: row.sell_value,
+            production_time,
+            yield_amount: 1,
+            energy: None,
+            facility_level: row.facility_level,
+            module_requirement: parse_module_requirement(&row.module_requirement),
+            workload: row.workload,
+            byproduct: None,
+            environment: None,
+        });
     }
 
     // Bouncy Brew Keg items
@@ -588,36 +564,34 @@ fn get_embedded_items() -> Vec<ProductionItem> {
     let mut rdr = ReaderBuilder::new()
         .trim(csv::Trim::All)
         .from_reader(brew_data.as_bytes());
-    for result in rdr.deserialize::<crate::models::ProcessingRowNoEnergy>() {
-        if let Ok(row) = result {
-            let raw_mats = parse_raw_materials(&row.raw_materials);
-            let req_amounts = parse_required_amounts(&row.required_amount);
-            let production_time = row
-                .workload
-                .map(|w| w / crate::models::WORKLOAD_RATE_ESTIMATE)
-                .or(row.production_time)
-                .expect("row must have either workload or production_time");
-            items.push(ProductionItem {
-                name: row.name,
-                facility: "Bouncy Brew Keg".to_string(),
-                raw_materials: Some(raw_mats),
-                required_amount: Some(req_amounts),
-                cost: None,
-                sell_currency: row
-                    .sell_currency
-                    .clone()
-                    .unwrap_or_else(|| "coins".to_string()),
-                sell_value: row.sell_value,
-                production_time,
-                yield_amount: 1,
-                energy: None,
-                facility_level: row.facility_level,
-                module_requirement: parse_module_requirement(&row.module_requirement),
-                workload: row.workload,
-                byproduct: None,
-                environment: None,
-            });
-        }
+    for row in rdr.deserialize::<crate::models::ProcessingRowNoEnergy>().flatten() {
+        let raw_mats = parse_raw_materials(&row.raw_materials);
+        let req_amounts = parse_required_amounts(&row.required_amount);
+        let production_time = row
+            .workload
+            .map(|w| w / crate::models::WORKLOAD_RATE_ESTIMATE)
+            .or(row.production_time)
+            .expect("row must have either workload or production_time");
+        items.push(ProductionItem {
+            name: row.name,
+            facility: "Bouncy Brew Keg".to_string(),
+            raw_materials: Some(raw_mats),
+            required_amount: Some(req_amounts),
+            cost: None,
+            sell_currency: row
+                .sell_currency
+                .clone()
+                .unwrap_or_else(|| "coins".to_string()),
+            sell_value: row.sell_value,
+            production_time,
+            yield_amount: 1,
+            energy: None,
+            facility_level: row.facility_level,
+            module_requirement: parse_module_requirement(&row.module_requirement),
+            workload: row.workload,
+            byproduct: None,
+            environment: None,
+        });
     }
 
     // Joy Wheel Loom items
@@ -625,36 +599,34 @@ fn get_embedded_items() -> Vec<ProductionItem> {
     let mut rdr = ReaderBuilder::new()
         .trim(csv::Trim::All)
         .from_reader(joy_wheel_data.as_bytes());
-    for result in rdr.deserialize::<crate::models::ProcessingRowNoEnergy>() {
-        if let Ok(row) = result {
-            let raw_mats = parse_raw_materials(&row.raw_materials);
-            let req_amounts = parse_required_amounts(&row.required_amount);
-            let production_time = row
-                .workload
-                .map(|w| w / crate::models::WORKLOAD_RATE_ESTIMATE)
-                .or(row.production_time)
-                .expect("row must have either workload or production_time");
-            items.push(ProductionItem {
-                name: row.name,
-                facility: "Joy Wheel Loom".to_string(),
-                raw_materials: Some(raw_mats),
-                required_amount: Some(req_amounts),
-                cost: None,
-                sell_currency: row
-                    .sell_currency
-                    .clone()
-                    .unwrap_or_else(|| "coins".to_string()),
-                sell_value: row.sell_value,
-                production_time,
-                yield_amount: 1,
-                energy: None,
-                facility_level: row.facility_level,
-                module_requirement: parse_module_requirement(&row.module_requirement),
-                workload: row.workload,
-                byproduct: None,
-                environment: None,
-            });
-        }
+    for row in rdr.deserialize::<crate::models::ProcessingRowNoEnergy>().flatten() {
+        let raw_mats = parse_raw_materials(&row.raw_materials);
+        let req_amounts = parse_required_amounts(&row.required_amount);
+        let production_time = row
+            .workload
+            .map(|w| w / crate::models::WORKLOAD_RATE_ESTIMATE)
+            .or(row.production_time)
+            .expect("row must have either workload or production_time");
+        items.push(ProductionItem {
+            name: row.name,
+            facility: "Joy Wheel Loom".to_string(),
+            raw_materials: Some(raw_mats),
+            required_amount: Some(req_amounts),
+            cost: None,
+            sell_currency: row
+                .sell_currency
+                .clone()
+                .unwrap_or_else(|| "coins".to_string()),
+            sell_value: row.sell_value,
+            production_time,
+            yield_amount: 1,
+            energy: None,
+            facility_level: row.facility_level,
+            module_requirement: parse_module_requirement(&row.module_requirement),
+            workload: row.workload,
+            byproduct: None,
+            environment: None,
+        });
     }
 
     // Nimbus Bed items (produces Wool and Petals)
@@ -662,26 +634,24 @@ fn get_embedded_items() -> Vec<ProductionItem> {
     let mut rdr = ReaderBuilder::new()
         .trim(csv::Trim::All)
         .from_reader(nimbus_data.as_bytes());
-    for result in rdr.deserialize::<crate::models::NimbusBedRow>() {
-        if let Ok(row) = result {
-            items.push(ProductionItem {
-                name: row.name,
-                facility: "Nimbus Bed".to_string(),
-                raw_materials: None,
-                required_amount: None,
-                cost: None,
-                sell_currency: "coins".to_string(),
-                sell_value: row.sell_value,
-                production_time: row.workload / crate::models::WORKLOAD_RATE_ESTIMATE,
-                yield_amount: row.yield_amount,
-                energy: None,
-                facility_level: 1,
-                module_requirement: None,
-                workload: Some(row.workload),
-                byproduct: None,
-                environment: None,
-            });
-        }
+    for row in rdr.deserialize::<crate::models::NimbusBedRow>().flatten() {
+        items.push(ProductionItem {
+            name: row.name,
+            facility: "Nimbus Bed".to_string(),
+            raw_materials: None,
+            required_amount: None,
+            cost: None,
+            sell_currency: "coins".to_string(),
+            sell_value: row.sell_value,
+            production_time: row.workload / crate::models::WORKLOAD_RATE_ESTIMATE,
+            yield_amount: row.yield_amount,
+            energy: None,
+            facility_level: 1,
+            module_requirement: None,
+            workload: Some(row.workload),
+            byproduct: None,
+            environment: None,
+        });
     }
 
     items

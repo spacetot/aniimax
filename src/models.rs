@@ -632,7 +632,7 @@ impl FacilityCounts {
 ///
 /// assert!(modules.can_use("ecological_module", 1));
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ModuleLevels {
     /// Level of Ecological Module (unlocks high-speed wheat at 1, high-speed willow at 2)
     pub ecological_module: u32,
@@ -642,17 +642,6 @@ pub struct ModuleLevels {
     pub mineral_detector: u32,
     /// Level of Crafting Module (unlocks advanced wood carving at 1)
     pub crafting_module: u32,
-}
-
-impl Default for ModuleLevels {
-    fn default() -> Self {
-        ModuleLevels {
-            ecological_module: 0,
-            kitchen_module: 0,
-            mineral_detector: 0,
-            crafting_module: 0,
-        }
-    }
 }
 
 impl ModuleLevels {

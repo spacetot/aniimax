@@ -553,7 +553,7 @@ cargo doc --open
 
 ### Deploying to GitHub Pages
 
-The web app is automatically deployed to GitHub Pages on every push to the main branch. You can also manually deploy by copying the contents of the `web/` directory to your gh-pages branch.
+Deployment (`.github/workflows/deploy.yml`) runs on pushing a version tag (`v*`) or via manual workflow dispatch, not on every push to main. Tag a release (`git tag v0.14.1 && git push --tags`) or trigger the workflow manually to deploy. You can also deploy by hand by copying the contents of the `web/` directory (including a freshly built `web/pkg/`) to your gh-pages branch.
 
 ## Data Format
 

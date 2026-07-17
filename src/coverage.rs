@@ -391,7 +391,7 @@ fn solve_one_building_layout<'a>(
     // value is `<= EPS`) rather than ever trusting a possibly-infeasible selection.
     let is_integral = vars.iter().all(|(_, v)| {
         let x = solution[*v];
-        x < 1e-6 || x > 1.0 - 1e-6
+        !(1e-6..=1.0 - 1e-6).contains(&x)
     });
     if !is_integral {
         return (Vec::new(), 0.0);

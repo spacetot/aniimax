@@ -73,7 +73,7 @@ fn calculate_optimal_facility_allocation(
         }
         let mut k = 1u32;
         while k <= *batches {
-            let rounds = (*batches + k - 1) / k; // ceil(batches / k)
+            let rounds = (*batches).div_ceil(k); // ceil(batches / k)
             candidate_times.push(rounds as f64 * time);
             // Jump to next k that gives a different ceil value
             if rounds > 1 {
@@ -87,7 +87,7 @@ fn calculate_optimal_facility_allocation(
         }
         // Also add the case where we use all facilities for this material
         if total_facilities > 0 {
-            candidate_times.push(((*batches + total_facilities - 1) / total_facilities) as f64 * time);
+            candidate_times.push((*batches).div_ceil(total_facilities) as f64 * time);
         }
     }
     
@@ -162,7 +162,7 @@ fn is_time_feasible(
         }
         
         // Minimum facilities needed: ceil(batches / max_rounds)
-        let min_facilities = (*batches + max_rounds - 1) / max_rounds;
+        let min_facilities = (*batches).div_ceil(max_rounds);
         facilities_needed = facilities_needed.saturating_add(min_facilities);
         
         if facilities_needed > total_facilities {
@@ -199,7 +199,7 @@ fn calculate_allocation_for_time(
         let min_facilities = if max_rounds == 0 {
             *batches // Need one facility per batch (shouldn't happen if time is feasible)
         } else {
-            (*batches + max_rounds - 1) / max_rounds
+            (*batches).div_ceil(max_rounds)
         };
         
         allocations.push((*idx, min_facilities));
@@ -225,7 +225,7 @@ fn calculate_allocation_for_time(
                 continue;
             }
             
-            let current_rounds = (*batches + current_facilities - 1) / current_facilities;
+            let current_rounds = (*batches).div_ceil(current_facilities);
             let new_rounds = (*batches + current_facilities) / (current_facilities + 1);
             
             if new_rounds < current_rounds {
@@ -320,7 +320,7 @@ fn resolve_raw_material<'a>(
         let can_use = hs
             .module_requirement
             .as_ref()
-            .map_or(true, |(m, l)| module_levels.can_use(m, *l));
+            .is_none_or(|(m, l)| module_levels.can_use(m, *l));
         let can_produce = facility_counts.can_produce(&hs.facility, hs.facility_level);
         if can_use && can_produce {
             return Some(hs);
@@ -562,7 +562,7 @@ fn calculate_item_requirements(
     
     let result = if let Some(ref raw_mats) = item.raw_materials {
         // This is a processed item - recursively calculate requirements for each ingredient
-        let required_amounts = item.required_amount.as_ref().map(|v| v.as_slice()).unwrap_or(&[]);
+        let required_amounts = item.required_amount.as_deref().unwrap_or(&[]);
         
         let mut max_ingredient_time = 0.0;
         let mut total_ingredient_energy: Option<f64> = None;
@@ -818,7 +818,7 @@ pub fn calculate_efficiencies(
         let (total_time, steady_state_time, total_energy, raw_cost, requires_raw, raw_facility, all_facilities, intermediate_steps, raw_material_details, facility_demand) =
             if let Some(ref raw_mats) = item.raw_materials {
                 // This is a processed item - use recursive calculation to handle nested dependencies
-                let required_amounts = item.required_amount.as_ref().map(|v| v.as_slice()).unwrap_or(&[]);
+                let required_amounts = item.required_amount.as_deref().unwrap_or(&[]);
                 
                 // Track totals across all raw materials
                 let mut max_ingredient_time = 0.0;
@@ -1295,6 +1295,7 @@ pub fn find_best_production_path(
 /// - Farmland → Carousel Mill (super_wheatmeal)
 /// - Woodland → Crafting Table (wood_sculpture)  
 /// - Nimbus Bed (wool)
+///
 /// All running in parallel since they use different facilities.
 ///
 /// # Algorithm
@@ -1395,12 +1396,8 @@ pub fn find_parallel_production_path(
     let mut total_profit = 0.0;
     let mut total_energy: Option<f64> = None;
     let mut total_items = 0u32;
-    let mut chain_id: u32 = 0;
 
-    for eff in &selected_items {
-        let current_chain_id = chain_id;
-        chain_id += 1;
-        
+    for (current_chain_id, eff) in (0_u32..).zip(selected_items.iter()) {
         let profit_per_batch = eff.item.sell_value * eff.item.yield_amount as f64 - eff.raw_cost;
         
         // Calculate batches based on steady-state time
@@ -3079,7 +3076,7 @@ pub fn find_production_plan_with_progress(
     };
 
     let mut trial_count: u32 = 0;
-    let Some((mut mode_counts, mut placements, mut layouts, mut coverage_bounds, mut candidates)) =
+    let (mut mode_counts, mut placements, mut layouts, mut coverage_bounds, mut candidates) =
         solve_environment_and_facility_allocation(
             items,
             &item_map,
@@ -3088,10 +3085,7 @@ pub fn find_production_plan_with_progress(
             &byproduct_floors,
             &mut trial_count,
             on_progress,
-        )
-    else {
-        return None;
-    };
+        )?;
 
     // Environment-coverage-CHOICE exclusion: `solve_environment_and_facility_allocation` already
     // fixes a phantom-coverage bug (a chain whose price LOOKED good but never actually produces
@@ -3703,7 +3697,7 @@ pub fn find_production_plan_with_progress(
                         eff_by_name.get(chain_name.as_str()).map(|&eff| (item_name.as_str(), eff, count))
                     })
                     .collect();
-                assigned.sort_by(|a, b| b.2.cmp(&a.2));
+                assigned.sort_by_key(|a| std::cmp::Reverse(a.2));
 
                 if assigned.is_empty() {
                     return vec![PlanStep {
@@ -4022,7 +4016,7 @@ pub fn time_to_reach_goal(plan: &ProductionPlan, target: f64, current: f64) -> O
             })
         })
         .collect();
-    seed_requirements.sort_by(|a, b| b.total_seeds.cmp(&a.total_seeds));
+    seed_requirements.sort_by_key(|r| std::cmp::Reverse(r.total_seeds));
 
     Some(GoalResult {
         total_time,
