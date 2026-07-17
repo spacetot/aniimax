@@ -1361,6 +1361,48 @@ fn test_two_hop_chain_is_infeasible_with_only_one_unit_of_its_shared_facility() 
     assert_eq!(producing[0].facility_count, 1);
 }
 
+#[test]
+fn test_mixed_level_tiers_split_capacity_by_what_each_tier_can_actually_run() {
+    let data_dir = Path::new("data");
+    if !data_dir.exists() {
+        return;
+    }
+    let items = load_all_data(data_dir).expect("Failed to load data");
+    // A player commonly upgrades some but not all of their plots of one facility type. Own 5
+    // Farmland at level 3 and 4 more upgraded to level 5 — ginseng (level 5, needs Cool) can only
+    // ever run on the 4 level-5 plots, while soybean (level 3, no environment) is eligible on all
+    // 9 (a higher-level plot can always run a lower-level recipe too). Regression test for the
+    // exact scenario confirmed live in the browser: with only 5+4=9 total reported by the OLD
+    // level-agnostic `get_count`, a level-5 item could wrongly be assigned rate implying up to 9
+    // dedicated plots, when only 4 physically qualify.
+    let mut counts = FacilityCounts::new();
+    counts.add_tier("Farmland", 5, 3);
+    counts.add_tier("Farmland", 4, 5);
+    counts.set("Cooling Unit", 3, 1);
+    let modules = ModuleLevels {
+        ecological_module: 4,
+        kitchen_module: 4,
+        mineral_detector: 4,
+        crafting_module: 4,
+    };
+
+    let plan = find_production_plan(&items, "coins", &counts, &modules, false).expect("plan should be feasible");
+
+    let ginseng_step = plan
+        .coin_items
+        .iter()
+        .find(|s| s.facility == "Farmland" && s.item_name.as_deref() == Some("ginseng"))
+        .expect("ginseng should be produced at Farmland using the level-5 tier");
+    assert_eq!(
+        ginseng_step.facility_count, 4,
+        "ginseng needs facility level 5, so it should be capped at the 4 level-5 plots, not all 9, got: {:?}",
+        ginseng_step
+    );
+
+    let farmland_total: u32 = plan.coin_items.iter().filter(|s| s.facility == "Farmland").map(|s| s.facility_count).sum();
+    assert_eq!(farmland_total, 9, "all 9 owned Farmland plots should be accounted for, got: {farmland_total}");
+}
+
 // `prioritize_byproducts`: a hard floor forcing the coin-optimizing solve to hit the true maximum
 // achievable Wood Blocks/Mineral Sand rate first, then spend whatever facility capacity is left
 // over on profit. This scenario is deliberately set up so growing walnut/chestnut/maple_syrup for
@@ -1502,3 +1544,115 @@ fn test_large_multi_facility_config_stays_fast() {
     assert!(found_plan, "expected a feasible plan for this facility config");
     assert!(elapsed.as_secs_f64() < 2.0, "took too long: {:?} (target: well under 1s)", elapsed);
 }
+
+#[test]
+fn test_single_dominant_processor_item_claims_every_owned_unit() {
+    let data_dir = Path::new("data");
+    if !data_dir.exists() {
+        return;
+    }
+    let items = load_all_data(data_dir).expect("Failed to load data");
+    // Regression test for a real bug: `build_processor_usage` divided an item's own
+    // "how many whole units does this rate need" quantity by the facility's total owned count a
+    // SECOND time, turning it into a fraction of total capacity before ceiling it. That's harmless
+    // for a trickle contributor (its fraction stays under 1 either way) but wrong for anything
+    // needing MORE than one unit: with gemstone_dust the only profitable Crafting Table item and
+    // plenty of raw gem supply, it should dominate and claim all 5 owned Crafting Tables, not just
+    // 1 (which the bug reported: fraction = 5/5 = 1.0, ceil() = 1).
+    let counts = FacilityCounts::from_pairs(&[
+        ("Mineral Pile", 1000, 4),
+        ("Crafting Table", 5, 4),
+        ("Woodland", 0, 1),
+        ("Tidewhisper Sandcastle", 0, 1),
+    ]);
+    let modules = ModuleLevels {
+        ecological_module: 4,
+        kitchen_module: 4,
+        mineral_detector: 4,
+        crafting_module: 4,
+    };
+    let plan = find_production_plan(&items, "coins", &counts, &modules, false).expect("plan should be feasible");
+
+    let gemstone_step = plan
+        .coin_items
+        .iter()
+        .find(|s| s.facility == "Crafting Table" && s.item_name.as_deref() == Some("gemstone_dust"))
+        .expect("gemstone_dust should be produced at Crafting Table");
+    assert_eq!(
+        gemstone_step.facility_count, 5,
+        "gemstone_dust is the only profitable Crafting Table item with abundant raw supply, so it \
+         should claim all 5 owned units, got: {:?}",
+        gemstone_step
+    );
+    assert!(
+        plan.coin_items.iter().all(|s| s.facility != "Crafting Table" || s.status != PlanStepStatus::Idle),
+        "no Crafting Table should sit idle when gemstone_dust could use it"
+    );
+}
+
+#[test]
+fn test_environment_coverage_choice_does_not_settle_for_a_worse_joint_split() {
+    let data_dir = Path::new("data");
+    if !data_dir.exists() {
+        return;
+    }
+    let items = load_all_data(data_dir).expect("Failed to load data");
+    let modules = ModuleLevels {
+        ecological_module: 4,
+        kitchen_module: 4,
+        mineral_detector: 4,
+        crafting_module: 4,
+    };
+    // Regression test for a real user report: with only 1 Sunlamp but 3 Cooling Units, grape
+    // (Farmland, needs Adequate) priced high enough on its own static per-plot economics to claim
+    // the single Sunlamp's coverage, dragging pine (Woodland, ALSO Adequate) into competing for
+    // that same tiny pool — even though ginseng (Farmland, needs Cool) and pine sharing the
+    // Cooling Units' 3x larger pool instead genuinely produces more (confirmed by hand: 45.72
+    // coins/sec vs. 43.91 with grape, an ~4% real gap using nothing but candidates already
+    // available in the unrestricted solve). The environment-coverage-CHOICE exclusion pass in
+    // `find_production_plan` should catch this and pick the genuinely better split on its own,
+    // without needing grape manually excluded.
+    let counts = FacilityCounts::from_pairs(&[
+        ("Farmland", 28, 5),
+        ("Woodland", 14, 4),
+        ("Mineral Pile", 7, 4),
+        ("Heat Furnace", 3, 1),
+        ("Cooling Unit", 3, 1),
+        ("Sunlamp", 1, 1),
+        ("Nimbus Bed", 1, 1),
+        ("Grass Blossom Mat", 1, 1),
+        ("Starfall Hammock", 1, 1),
+        ("Tidewhisper Sandcastle", 1, 1),
+        ("Dewy House", 1, 1),
+        ("Carousel Mill", 2, 3),
+        ("Phonolfactory Table", 2, 3),
+        ("Bouncy Brew Keg", 2, 2),
+        ("Crafting Table", 2, 4),
+        ("Claw Game Cooker", 2, 3),
+        ("Joy Wheel Loom", 2, 3),
+        ("Jukebox Dryer", 2, 4),
+    ]);
+
+    let plan = find_production_plan(&items, "coins", &counts, &modules, false).expect("plan should be feasible");
+
+    assert!(
+        plan.coin_items.iter().all(|s| s.item_name.as_deref() != Some("grape")),
+        "grape should be excluded in favor of the genuinely better ginseng+pine+walnut split, got: {:?}",
+        plan.coin_items.iter().filter(|s| s.facility == "Farmland").collect::<Vec<_>>()
+    );
+    let ginseng = plan.coin_items.iter().find(|s| s.item_name.as_deref() == Some("ginseng"));
+    assert!(
+        ginseng.is_some_and(|s| s.facility_count == 28),
+        "expected all 28 Farmland plots dedicated to ginseng, got: {:?}",
+        plan.coin_items.iter().filter(|s| s.facility == "Farmland").collect::<Vec<_>>()
+    );
+    // The exact optimum found by hand (excluding grape manually and taking the best of what's
+    // left) — the automatic exclusion pass should reach the same total, not just something better
+    // than the grape-including baseline.
+    assert!(
+        (plan.rate_per_second - 45.71963636363636).abs() < 1e-6,
+        "expected the true joint optimum (~45.72 coins/sec), got {}",
+        plan.rate_per_second
+    );
+}
+

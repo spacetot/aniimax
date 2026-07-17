@@ -1,4 +1,4 @@
-//! Production optimization algorithms for the Aniimo optimizer.
+﻿//! Production optimization algorithms for the Aniimo optimizer.
 //!
 //! This module contains the core optimization logic that calculates
 //! production efficiencies and finds the best production paths to
@@ -405,32 +405,51 @@ fn compute_resource_demand<'a>(
 }
 
 /// The true bottleneck-limited batches/sec achievable at the root of a resource-demand map: the
-/// minimum, over every facility touched anywhere in the tree, of that facility's own batch
-/// capacity divided by its accumulated utilization (see [`accumulate_demand`]) — a facility
-/// touched by only one item reduces to the familiar `facility_count / production_time /
-/// required_per_batch`; a facility touched by multiple items (whether the same item via
-/// different branches, or different items time-sharing it) gets their utilization summed here
-/// (the map itself is keyed per (facility, item) now — see `ProductionEfficiency::facility_demand`
-/// — so every distinct item's share must be added up per facility before comparing to capacity).
-fn batch_rate_bound(demand: &HashMap<(&str, &str), f64>, facility_counts: &FacilityCounts) -> f64 {
-    let mut facility_totals: HashMap<&str, f64> = HashMap::new();
-    for (&(facility, _item), &utilization) in demand {
-        *facility_totals.entry(facility).or_insert(0.0) += utilization;
+/// minimum, over every (facility, required-level threshold) touched anywhere in the tree, of
+/// however many owned tiers meet that threshold (see [`FacilityCounts::capacity_at_level`])
+/// divided by the accumulated utilization from items requiring at least that level (see
+/// [`accumulate_demand`]) — same threshold technique as `solve_facility_allocation`'s own
+/// capacity constraints (see that function's doc comment for why per-threshold, not just
+/// per-facility, is the exact bound once a facility can own tiers at different levels). A
+/// facility owned at a single level (the common case) has only one threshold and this reduces to
+/// the familiar `facility_count / production_time / required_per_batch`; a facility touched by
+/// multiple items (whether the same item via different branches, or different items time-sharing
+/// it) gets their utilization summed at each threshold rather than compared individually.
+fn batch_rate_bound(
+    demand: &HashMap<(&str, &str), f64>,
+    facility_counts: &FacilityCounts,
+    item_map: &HashMap<String, &ProductionItem>,
+) -> f64 {
+    let item_facility_level = |item_name: &str| item_map.get(item_name).map(|i| i.facility_level).unwrap_or(1);
+    let mut facility_thresholds: HashMap<&str, HashSet<u32>> = HashMap::new();
+    for &(facility, item) in demand.keys() {
+        facility_thresholds.entry(facility).or_default().insert(item_facility_level(item));
     }
-    facility_totals
-        .iter()
-        .map(|(facility, utilization)| {
-            if *utilization <= 0.0 {
-                return f64::INFINITY;
+    // Sorted for the same determinism reason as `solve_facility_allocation`'s identical pattern
+    // (see that function's doc comment): `HashMap`/`HashSet` iteration order is randomized
+    // per-process, and floating-point addition isn't perfectly order-independent, so summing
+    // `utilization` in a different order across runs could shift this bound by a rounding hair —
+    // enough, in a near-tied LP, to flip which of two equally-profitable candidates wins.
+    let mut sorted_facilities: Vec<&str> = facility_thresholds.keys().copied().collect();
+    sorted_facilities.sort_unstable();
+    let mut bound = f64::INFINITY;
+    for facility in sorted_facilities {
+        let mut thresholds: Vec<u32> = facility_thresholds[facility].iter().copied().collect();
+        thresholds.sort_unstable();
+        for threshold in thresholds {
+            let utilization: f64 = demand
+                .iter()
+                .filter(|&(&(f, item), _)| f == facility && item_facility_level(item) >= threshold)
+                .map(|(_, &u)| u)
+                .sum();
+            if utilization <= 0.0 {
+                continue;
             }
-            let count = facility_counts.get_count(facility) as f64;
-            if count <= 0.0 {
-                0.0
-            } else {
-                count / utilization
-            }
-        })
-        .fold(f64::INFINITY, f64::min)
+            let capacity = facility_counts.capacity_at_level(facility, threshold) as f64;
+            bound = bound.min(capacity / utilization);
+        }
+    }
+    bound
 }
 
 /// Recursively calculates production requirements for an item.
@@ -632,8 +651,10 @@ fn calculate_item_requirements(
             }
         }
         
-        // Add processing time for this item
-        let processing_facility_count = facility_counts.get_count(&item.facility) as f64;
+        // Add processing time for this item — only units at a tier meeting `item.facility_level`
+        // can actually run this recipe (see `FacilityCounts::capacity_at_level`).
+        let processing_facility_count =
+            facility_counts.capacity_at_level(&item.facility, item.facility_level) as f64;
         let processing_time = item.production_time * (batches_needed / processing_facility_count).ceil();
         
         // Add processing energy
@@ -655,10 +676,11 @@ fn calculate_item_requirements(
             is_valid: true,
         }
     } else {
-        // This is a base raw material
-        let facility_count = facility_counts.get_count(&item.facility) as f64;
+        // This is a base raw material — only units at a tier meeting `item.facility_level` can
+        // actually run this recipe (see `FacilityCounts::capacity_at_level`).
+        let facility_count = facility_counts.capacity_at_level(&item.facility, item.facility_level) as f64;
         let batches_needed = (required_amount / item.yield_amount as f64).ceil();
-        
+
         // Calculate time with parallel facilities
         let time_per_batch = item.production_time;
         let parallel_batches = (batches_needed / facility_count).ceil();
@@ -880,7 +902,8 @@ pub fn calculate_efficiencies(
                     continue;
                 }
 
-                let processing_facility_count = facility_counts.get_count(&item.facility) as f64;
+                let processing_facility_count =
+                    facility_counts.capacity_at_level(&item.facility, item.facility_level) as f64;
                 let processing_time_per_mill = item.production_time; // Time for 1 mill to process 1 batch
                 let processing_time = processing_time_per_mill / processing_facility_count;
 
@@ -905,7 +928,7 @@ pub fn calculate_efficiencies(
                 // We need to calculate the raw material RATE instead.
                 //
                 // For now, let's calculate: what's the rate at which farms can supply materials?
-                // rate = (yield per batch × facility_count) / batch_time / required_per_processed_batch
+                // rate = (yield per batch Ã— facility_count) / batch_time / required_per_processed_batch
                 // This gives us "processed batches worth of materials per second"
                 
                 // Collect raw material details for the same-facility multi-material allocation
@@ -938,7 +961,7 @@ pub fn calculate_efficiencies(
                 // it (including this item's own processing facility, and any raw material shared
                 // across multiple branches) — see `compute_resource_demand`/`batch_rate_bound`.
                 let demand = compute_resource_demand(item, &item_map, facility_counts, module_levels);
-                let batches_per_second = batch_rate_bound(&demand, facility_counts);
+                let batches_per_second = batch_rate_bound(&demand, facility_counts, &item_map);
                 let facility_demand: Vec<(String, String, f64)> = demand
                     .into_iter()
                     .map(|((facility, item_name), utilization)| {
@@ -1001,8 +1024,9 @@ pub fn calculate_efficiencies(
                     facility_demand,
                 )
             } else {
-                // This is a raw material - direct production
-                let facility_count = facility_counts.get_count(&item.facility) as f64;
+                // This is a raw material - direct production. Only units at a tier meeting
+                // `item.facility_level` can actually run this recipe.
+                let facility_count = facility_counts.capacity_at_level(&item.facility, item.facility_level) as f64;
                 let time_per_batch = item.production_time;
 
                 // For display purposes, time_per_unit is how long to produce one unit
@@ -1268,8 +1292,8 @@ pub fn find_best_production_path(
 ///
 /// This function finds all production chains that can run simultaneously without
 /// sharing any facilities. For example:
-/// - Farmland → Carousel Mill (super_wheatmeal)
-/// - Woodland → Crafting Table (wood_sculpture)  
+/// - Farmland â†’ Carousel Mill (super_wheatmeal)
+/// - Woodland â†’ Crafting Table (wood_sculpture)  
 /// - Nimbus Bed (wool)
 /// All running in parallel since they use different facilities.
 ///
@@ -1935,8 +1959,8 @@ fn item_lead_time(name: &str, item_map: &HashMap<&str, &ProductionItem>, depth: 
 /// `eff.facility_demand` (see `compute_resource_demand`) already gives exactly the constraint
 /// coefficients needed: for item `i` and facility `f`, how much of `f`'s batch capacity one
 /// batch/sec of `i` consumes. That's the entire LP — one variable per item (its batches/sec,
-/// coefficient = net profit per batch, ≥ 0), one constraint per owned facility (sum of
-/// utilization × rate across every item touching it ≤ that facility's count). A facility ending
+/// coefficient = net profit per batch, â‰¥ 0), one constraint per owned facility (sum of
+/// utilization Ã— rate across every item touching it â‰¤ that facility's count). A facility ending
 /// up split between multiple items falls out of the solution naturally whenever that's optimal —
 /// no separate "leftover" bookkeeping needed, and no dependency on the order items happen to be
 /// considered in, since every variable is solved for simultaneously.
@@ -2103,7 +2127,7 @@ fn solve_facility_allocation<'a>(
     let mut problem = Problem::new(OptimizationDirection::Maximize);
 
     // One column per candidate item with positive net profit — anything else can never help the
-    // objective (its coefficient would be ≤ 0), so excluding it up front keeps the problem small
+    // objective (its coefficient would be â‰¤ 0), so excluding it up front keeps the problem small
     // without changing the optimal solution.
     let mut item_vars: Vec<(&'a ProductionEfficiency, microlp::Variable)> = Vec::new();
     for eff in effs {
@@ -2118,39 +2142,65 @@ fn solve_facility_allocation<'a>(
         item_vars.push((eff, var));
     }
 
-    // One row per owned facility touched by at least one candidate: total utilization across
-    // every item using it can't exceed its batch capacity. A single chain can host MULTIPLE
-    // distinct items at the same facility (e.g. caramel_nut_chips needs walnut, chestnut, AND
-    // maple_syrup all from Woodland) — `facility_demand` now has one entry per item, so this sums
-    // every matching entry rather than taking just the first (which would silently undercount the
-    // facility's true total utilization for that chain).
-    let mut facility_names: HashSet<&str> = HashSet::new();
+    // One row per (owned facility, required-level threshold) touched by at least one candidate:
+    // total utilization from items requiring AT LEAST that level can't exceed however many owned
+    // tiers meet that bar (see `FacilityCounts::capacity_at_level`) — a higher-level tier can
+    // always run a lower-level recipe too (an upgrade never takes capability away), so eligible-
+    // unit sets NEST as the threshold rises (level>=5 âŠ† level>=4 âŠ† ... âŠ† level>=1). One
+    // constraint per distinct threshold that actually appears is the exact LP formulation for
+    // that nesting (a totally-ordered/"laminar" family of capacity constraints — both necessary,
+    // since items requiring level D can only ever use tiers meeting it, and sufficient, since a
+    // nested-demand transportation problem's feasibility is exactly characterized by these
+    // threshold cuts), not an approximation. A facility owned at a single level (the
+    // overwhelmingly common case) has only one threshold and this reduces to exactly the single
+    // constraint this used to be. A single chain can host MULTIPLE distinct items at the same
+    // facility (e.g. caramel_nut_chips needs walnut, chestnut, AND maple_syrup all from Woodland)
+    // — `facility_demand` has one entry per item, so this sums every matching entry rather than
+    // taking just the first (which would silently undercount the facility's true total
+    // utilization for that chain).
+    let item_facility_level = |item_name: &str| item_map.get(item_name).map(|i| i.facility_level).unwrap_or(1);
+    let mut facility_thresholds: HashMap<&str, HashSet<u32>> = HashMap::new();
     for (eff, _) in &item_vars {
-        for (facility, _, _) in &eff.facility_demand {
-            facility_names.insert(facility.as_str());
+        for (facility, item_name, _) in &eff.facility_demand {
+            facility_thresholds.entry(facility.as_str()).or_default().insert(item_facility_level(item_name));
         }
     }
-    for facility in facility_names {
-        // No lower bound skip here on purpose: a facility you own zero of must still get a
-        // constraint (capacity 0), not no constraint at all — skipping it here would let the LP
-        // treat "you don't own this" as "unlimited supply of it" instead of "none available".
-        let capacity = facility_counts.get_count(facility) as f64;
-        let terms: Vec<(microlp::Variable, f64)> = item_vars
-            .iter()
-            .filter_map(|(eff, var)| {
-                let total_utilization: f64 = eff
-                    .facility_demand
-                    .iter()
-                    .filter(|(f, _, _)| f == facility)
-                    .map(|(_, _, utilization)| utilization)
-                    .sum();
-                (total_utilization > 0.0).then_some((*var, total_utilization))
-            })
-            .collect();
-        if terms.is_empty() {
-            continue;
+    // Sorted (rather than left in `HashMap`/`HashSet` iteration order, which is randomized
+    // per-process) so the exact same input always produces the exact same plan: constraints get
+    // added to `problem` in a fixed order regardless of which run/browser-tab/WASM instance is
+    // solving it. Otherwise, whenever the true optimum has TIES (e.g. pine and a fallback crop
+    // both fully using Woodland's capacity at equal profit), the simplex method's tie-breaking
+    // can depend on constraint insertion order, so the same facilities could non-deterministically
+    // solve to a different-but-equally-optimal choice from one page load to the next — confirmed
+    // live: identical input reported pine one run and its fallback the next.
+    let mut sorted_facilities: Vec<&str> = facility_thresholds.keys().copied().collect();
+    sorted_facilities.sort_unstable();
+    for facility in sorted_facilities {
+        let mut thresholds: Vec<u32> = facility_thresholds[facility].iter().copied().collect();
+        thresholds.sort_unstable();
+        for threshold in thresholds {
+            // No lower bound skip here on purpose: a facility with zero owned tiers meeting this
+            // threshold must still get a constraint (capacity 0), not no constraint at all —
+            // skipping it here would let the LP treat "you don't own this" as "unlimited supply
+            // of it" instead of "none available".
+            let capacity = facility_counts.capacity_at_level(facility, threshold) as f64;
+            let terms: Vec<(microlp::Variable, f64)> = item_vars
+                .iter()
+                .filter_map(|(eff, var)| {
+                    let total_utilization: f64 = eff
+                        .facility_demand
+                        .iter()
+                        .filter(|(f, item_name, _)| f == facility && item_facility_level(item_name) >= threshold)
+                        .map(|(_, _, utilization)| utilization)
+                        .sum();
+                    (total_utilization > 0.0).then_some((*var, total_utilization))
+                })
+                .collect();
+            if terms.is_empty() {
+                continue;
+            }
+            problem.add_constraint(&terms, ComparisonOp::Le, capacity);
         }
-        problem.add_constraint(&terms, ComparisonOp::Le, capacity);
     }
 
     // Coverage-link constraints: for every (facility-type, environment) pair with at least one
@@ -2176,7 +2226,14 @@ fn solve_facility_allocation<'a>(
             }
         }
 
-        for env in environments_needed {
+        // Sorted for the same determinism reason noted on the capacity-constraint loop above:
+        // `HashSet` iteration order is randomized per-process, so adding these constraints in a
+        // different order across runs/page-loads could flip which of two equally-optimal
+        // environment-gated crops (e.g. pine vs. a fallback) the simplex method lands on for
+        // otherwise byte-identical input.
+        let mut sorted_envs: Vec<&str> = environments_needed.into_iter().collect();
+        sorted_envs.sort_unstable();
+        for env in sorted_envs {
             let terms: Vec<(microlp::Variable, f64)> = item_vars
                 .iter()
                 .filter_map(|(eff, var)| {
@@ -2553,7 +2610,7 @@ fn build_environment_assignment(
 /// falsely implying one unit alternates between recipes.
 ///
 /// A useful invariant: for a facility used by only one item, that item's `fraction` is always
-/// `≤ 1`, because the LP's own capacity constraint (`Σ utilization × rate ≤ capacity`) is defined
+/// `â‰¤ 1`, because the LP's own capacity constraint (`Î£ utilization Ã— rate â‰¤ capacity`) is defined
 /// relative to that same `capacity` — a solo consumer's usage can never exceed what the
 /// constraint allows. So every contributor to a contended facility needs exactly one dedicated
 /// unit, never more.
@@ -2582,11 +2639,21 @@ fn build_processor_usage<'a>(
             if capacity <= 0.0 {
                 continue;
             }
-            let fraction = utilization * rate / capacity;
-            if fraction < 0.001 {
+            // `utilization * rate` is already, on its own, "how many whole facility units this
+            // item's rate needs" (utilization is seconds of this facility's time per one batch of
+            // `eff`'s own rate, so multiplying by a batches/sec rate cancels to a dimensionless
+            // unit-count) — see `accumulate_demand`'s doc comment and the identical quantity used
+            // directly in `solve_facility_allocation`'s own capacity constraint. A prior version of
+            // this function divided by `capacity` here, turning that unit-count into a fraction OF
+            // total owned capacity — harmless for a trickle contributor (fraction stays under 1
+            // either way), but silently wrong for anything needing MORE than one unit (e.g. one
+            // item alone dominating 5 of 5 owned Crafting Tables came out as `fraction = 1.0`,
+            // `ceil() = 1`, reporting 1 dedicated unit instead of the true 5).
+            let units_needed = utilization * rate;
+            if units_needed < 0.001 {
                 continue; // negligible, not worth reporting
             }
-            usage.entry(facility.as_str()).or_default().push((eff, item_name.as_str(), fraction, rate_per_second));
+            usage.entry(facility.as_str()).or_default().push((eff, item_name.as_str(), units_needed, rate_per_second));
         }
     }
     usage
@@ -2594,7 +2661,7 @@ fn build_processor_usage<'a>(
 
 /// The true maximum byproduct rate achievable for `byproduct_currency` (`"wood_blocks"` or
 /// `"mineral_sand"`) using ALL of `facility_counts`, computed by running the exact same pipeline
-/// `find_production_plan` itself uses (efficiencies → environment coverage → facility-allocation
+/// `find_production_plan` itself uses (efficiencies â†’ environment coverage â†’ facility-allocation
 /// LP) with that byproduct as the sole target and no floor of its own — i.e. "if every owned
 /// Woodland/Mineral Pile plot were free to be dedicated purely to maximizing this byproduct, what
 /// rate would that achieve?" Used by `find_production_plan`'s `prioritize_byproducts` to compute
@@ -2619,47 +2686,28 @@ fn max_achievable_byproduct_rate(
     effs.iter().filter_map(|eff| allocation.get(eff.item.name.as_str()).map(|&rate| eff.batch_value * rate)).sum()
 }
 
-/// Solves for the provably-optimal simultaneous use of every owned facility for one target —
-/// a currency (`"coins"`/`"bud_tickets"`) or byproduct pseudo-currency (`"wood_blocks"`/
-/// `"mineral_sand"` — see `byproduct_resource_name`), matching `calculate_efficiencies`'
-/// `target_currency` — target-independent: no goal amount is needed to know the best achievable
-/// rate and facility plan. Pass the result to `time_to_reach_goal` to find out how long a
-/// specific goal takes.
-///
-/// `prioritize_byproducts`, when `true` and `currency` is itself a real currency (not already a
-/// byproduct target — prioritizing would be a no-op there, the whole plan already IS byproduct
-/// maximization), forces the solve to hit the true maximum achievable Wood Blocks AND Mineral Sand
-/// rate first (see `max_achievable_byproduct_rate`), then optimizes `currency` profit with
-/// whatever facility capacity is left over — a hard, real trade of profit for guaranteed maximum
-/// byproduct output, not a soft weighting. This is a real in-game constraint some players face
-/// (Wood Blocks/Mineral Sand are needed elsewhere and can't just be bought), so it's opt-in per
-/// call rather than a fixed behavior.
-pub fn find_production_plan(
+/// Runs the environment-coverage-pricing + packing + two-pass-refinement + stranded/marginal
+/// exclusion pipeline against one candidate set, returning `None` only if NOTHING is profitable
+/// anywhere (genuinely infeasible). Factored out of `find_production_plan` so its own
+/// environment-coverage-CHOICE exclusion pass (see that function's doc comment) can re-run this
+/// whole pipeline against a candidate set with one more chain excluded, to test whether ceding an
+/// environment-gated chain's building coverage to a competing chain does better overall — the
+/// SAME "try excluding, keep it only if the real total improves" pattern already used inside this
+/// pipeline for stranded/contended chains, just one level up (coverage-CHOICE rather than
+/// facility-plot rounding).
+fn solve_environment_and_facility_allocation(
     items: &[ProductionItem],
-    currency: &str,
+    item_map: &HashMap<&str, &ProductionItem>,
+    effs: &[ProductionEfficiency],
     facility_counts: &FacilityCounts,
-    module_levels: &ModuleLevels,
-    prioritize_byproducts: bool,
-) -> Option<ProductionPlan> {
-    let item_map: HashMap<&str, &ProductionItem> =
-        items.iter().map(|i| (i.name.as_str(), i)).collect();
-
-    let effs = calculate_efficiencies(items, currency, facility_counts, module_levels);
-
-    // See `find_production_plan`'s own doc comment on `prioritize_byproducts`: computed once
-    // upfront (each is its own full sub-solve) and reused as a fixed floor for every
-    // `solve_facility_allocation` call below, the same way `coverage_bounds` is.
-    let byproduct_floors: Vec<(&str, f64)> = if prioritize_byproducts && byproduct_resource_name(currency).is_none() {
-        [("wood_blocks", "Wood Blocks"), ("mineral_sand", "Mineral Sand")]
-            .into_iter()
-            .map(|(target, resource)| {
-                (resource, max_achievable_byproduct_rate(items, target, facility_counts, module_levels))
-            })
-            .collect()
-    } else {
-        Vec::new()
-    };
-
+    byproduct_floors: &[(&str, f64)],
+) -> Option<(
+    HashMap<(&'static str, &'static str), u32>,
+    HashMap<&'static str, Vec<(crate::coverage::Placement, u32)>>,
+    HashMap<&'static str, Vec<Vec<crate::coverage::Placement>>>,
+    HashMap<(String, String), u32>,
+    Vec<ProductionEfficiency>,
+)> {
     // Environment coverage (see `solve_facility_allocation`'s doc comment for why this is solved
     // separately from, rather than jointly with, the continuous item-rate LP below) is priced by
     // `compute_coverage_weights`'s own doc comment as "profit per plot IF fully dedicated" — a
@@ -2677,7 +2725,7 @@ pub fn find_production_plan(
     // priority away from something that does. Capped at exactly one refinement (not an open-ended
     // fixed point) to bound the added cost to roughly double, the same kind of tractability trade
     // `MAX_MARGINAL_EXCLUSIONS` below already makes.
-    let mut coverage_weights = compute_coverage_weights(&item_map, &effs);
+    let mut coverage_weights = compute_coverage_weights(item_map, effs);
     let mut refined_once = false;
     let (mode_counts, placements, layouts, coverage_bounds, candidates) = loop {
         let (mode_counts, placements, layouts) = solve_environment_coverage(&coverage_weights, facility_counts);
@@ -2716,7 +2764,7 @@ pub fn find_production_plan(
             let trial: Vec<ProductionEfficiency> =
                 effs.iter().filter(|e| !excluded.contains(&e.item.name)).cloned().collect();
             let trial_allocation =
-                solve_facility_allocation(&item_map, &trial, facility_counts, &coverage_bounds, &byproduct_floors);
+                solve_facility_allocation(item_map, &trial, facility_counts, &coverage_bounds, byproduct_floors);
             if trial_allocation.is_empty() {
                 // Nothing profitable available anywhere — genuinely infeasible.
                 return None;
@@ -2724,7 +2772,7 @@ pub fn find_production_plan(
             let trial_eff_by_name: HashMap<&str, &ProductionEfficiency> =
                 trial.iter().map(|e| (e.item.name.as_str(), e)).collect();
             let trial_environment =
-                build_environment_assignment(&item_map, &trial_allocation, &trial_eff_by_name, &placements);
+                build_environment_assignment(item_map, &trial_allocation, &trial_eff_by_name, &placements);
             let trial_growers = build_grower_assignment(
                 items,
                 &trial_allocation,
@@ -2736,7 +2784,7 @@ pub fn find_production_plan(
                 .iter()
                 .filter(|&(&name, &rate)| {
                     let eff = trial_eff_by_name[name];
-                    final_rate_for(items, &item_map, eff, rate, &trial_growers, &trial_environment) <= 0.0
+                    final_rate_for(items, item_map, eff, rate, &trial_growers, &trial_environment) <= 0.0
                 })
                 .map(|(&name, _)| name.to_string())
                 .collect();
@@ -2753,7 +2801,7 @@ pub fn find_production_plan(
             // unexecutable fractional split.
             let trial_processor_usage = build_processor_usage(
                 items,
-                &item_map,
+                item_map,
                 &trial_allocation,
                 &trial_eff_by_name,
                 facility_counts,
@@ -2819,7 +2867,7 @@ pub fn find_production_plan(
             // that would make the same input produce different plans across runs.
             let current_total = total_final_value(
                 items,
-                &item_map,
+                item_map,
                 &trial_allocation,
                 &trial_eff_by_name,
                 &trial_growers,
@@ -2850,11 +2898,11 @@ pub fn find_production_plan(
                 let test_trial: Vec<ProductionEfficiency> =
                     effs.iter().filter(|e| !test_excluded.contains(&e.item.name)).cloned().collect();
                 let test_allocation = solve_facility_allocation(
-                    &item_map,
+                    item_map,
                     &test_trial,
                     facility_counts,
                     &coverage_bounds,
-                    &byproduct_floors,
+                    byproduct_floors,
                 );
                 if test_allocation.is_empty() {
                     continue;
@@ -2862,7 +2910,7 @@ pub fn find_production_plan(
                 let test_eff_by_name: HashMap<&str, &ProductionEfficiency> =
                     test_trial.iter().map(|e| (e.item.name.as_str(), e)).collect();
                 let test_environment =
-                    build_environment_assignment(&item_map, &test_allocation, &test_eff_by_name, &placements);
+                    build_environment_assignment(item_map, &test_allocation, &test_eff_by_name, &placements);
                 let test_growers = build_grower_assignment(
                     items,
                     &test_allocation,
@@ -2872,7 +2920,7 @@ pub fn find_production_plan(
                 );
                 let test_total = total_final_value(
                     items,
-                    &item_map,
+                    item_map,
                     &test_allocation,
                     &test_eff_by_name,
                     &test_growers,
@@ -2900,23 +2948,23 @@ pub fn find_production_plan(
         // environment rounding are both applied — the same "true, rounded outcome" check
         // `total_final_value` uses, not the raw continuous LP rate.
         let pass_allocation =
-            solve_facility_allocation(&item_map, &candidates, facility_counts, &coverage_bounds, &byproduct_floors);
+            solve_facility_allocation(item_map, &candidates, facility_counts, &coverage_bounds, byproduct_floors);
         let pass_eff_by_name: HashMap<&str, &ProductionEfficiency> =
             candidates.iter().map(|e| (e.item.name.as_str(), e)).collect();
         let pass_environment =
-            build_environment_assignment(&item_map, &pass_allocation, &pass_eff_by_name, &placements);
+            build_environment_assignment(item_map, &pass_allocation, &pass_eff_by_name, &placements);
         let pass_growers =
             build_grower_assignment(items, &pass_allocation, &pass_eff_by_name, facility_counts, &pass_environment);
         let producing: Vec<ProductionEfficiency> = candidates
             .iter()
             .filter(|eff| {
                 let rate = pass_allocation.get(eff.item.name.as_str()).copied().unwrap_or(0.0);
-                final_rate_for(items, &item_map, eff, rate, &pass_growers, &pass_environment) > 0.0
+                final_rate_for(items, item_map, eff, rate, &pass_growers, &pass_environment) > 0.0
             })
             .cloned()
             .collect();
 
-        let refined_weights = compute_coverage_weights(&item_map, &producing);
+        let refined_weights = compute_coverage_weights(item_map, &producing);
         refined_once = true;
         if refined_weights == coverage_weights {
             // Nothing would change — skip the redundant second pass.
@@ -2925,11 +2973,232 @@ pub fn find_production_plan(
         coverage_weights = refined_weights;
     };
 
-    // `candidates` has now settled (no stranded chains) — solve once more against it so
-    // `allocation`/`eff_by_name`/`grower_assignment` all borrow from a value that lives for the
-    // rest of the function, instead of threading the loop's trial values out through the borrow
-    // checker. Cheap: this problem size solves in well under a millisecond. `mode_counts` and
-    // `placements` (environment coverage) were already solved once, upfront, above — reused as-is.
+    Some((mode_counts, placements, layouts, coverage_bounds, candidates))
+}
+
+/// Solves for the provably-optimal simultaneous use of every owned facility for one target —
+/// a currency (`"coins"`/`"bud_tickets"`) or byproduct pseudo-currency (`"wood_blocks"`/
+/// `"mineral_sand"` — see `byproduct_resource_name`), matching `calculate_efficiencies`'
+/// `target_currency` — target-independent: no goal amount is needed to know the best achievable
+/// rate and facility plan. Pass the result to `time_to_reach_goal` to find out how long a
+/// specific goal takes.
+///
+/// `prioritize_byproducts`, when `true` and `currency` is itself a real currency (not already a
+/// byproduct target — prioritizing would be a no-op there, the whole plan already IS byproduct
+/// maximization), forces the solve to hit the true maximum achievable Wood Blocks AND Mineral Sand
+/// rate first (see `max_achievable_byproduct_rate`), then optimizes `currency` profit with
+/// whatever facility capacity is left over — a hard, real trade of profit for guaranteed maximum
+/// byproduct output, not a soft weighting. This is a real in-game constraint some players face
+/// (Wood Blocks/Mineral Sand are needed elsewhere and can't just be bought), so it's opt-in per
+/// call rather than a fixed behavior.
+pub fn find_production_plan(
+    items: &[ProductionItem],
+    currency: &str,
+    facility_counts: &FacilityCounts,
+    module_levels: &ModuleLevels,
+    prioritize_byproducts: bool,
+) -> Option<ProductionPlan> {
+    let item_map: HashMap<&str, &ProductionItem> =
+        items.iter().map(|i| (i.name.as_str(), i)).collect();
+
+    let effs = calculate_efficiencies(items, currency, facility_counts, module_levels);
+
+    // See `find_production_plan`'s own doc comment on `prioritize_byproducts`: computed once
+    // upfront (each is its own full sub-solve) and reused as a fixed floor for every
+    // `solve_facility_allocation` call below, the same way `coverage_bounds` is.
+    let byproduct_floors: Vec<(&str, f64)> = if prioritize_byproducts && byproduct_resource_name(currency).is_none() {
+        [("wood_blocks", "Wood Blocks"), ("mineral_sand", "Mineral Sand")]
+            .into_iter()
+            .map(|(target, resource)| {
+                (resource, max_achievable_byproduct_rate(items, target, facility_counts, module_levels))
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+
+    let Some((mut mode_counts, mut placements, mut layouts, mut coverage_bounds, mut candidates)) =
+        solve_environment_and_facility_allocation(items, &item_map, &effs, facility_counts, &byproduct_floors)
+    else {
+        return None;
+    };
+
+    // Environment-coverage-CHOICE exclusion: `solve_environment_and_facility_allocation` already
+    // fixes a phantom-coverage bug (a chain whose price LOOKED good but never actually produces
+    // anything hogging a building's coverage), but that's not the only way static per-plot pricing
+    // can mislead the packing pre-solve. Two chains can BOTH genuinely produce something and still
+    // be a bad joint choice: confirmed live with only 1 Sunlamp but 3 Cooling Units owned, grape
+    // (Farmland, Adequate) priced high enough to claim the single Sunlamp, dragging pine (Woodland,
+    // ALSO Adequate) into competing for that same tiny pool — while excluding grape entirely let
+    // ginseng (Farmland, Cool) and pine both share the Cooling Units' 3x larger pool instead,
+    // raising the real total by ~4%. Since coverage is priced from each chain's OWN static
+    // economics with no idea how many BUILDINGS of each competing environment exist, it can't see
+    // this trade-off coming — the only way to know is to actually try the alternative and compare
+    // real totals, same "try excluding, keep it only if it truly helps" pattern
+    // `solve_environment_and_facility_allocation`'s own marginal-exclusion pass already uses one
+    // level down (for facility-PLOT rounding rather than environment-coverage choice).
+    //
+    // Each trial here reruns that ENTIRE pipeline (packing ILP included), unlike the cheap LP-only
+    // marginal-exclusion pass inside it — a wall-clock budget was tried first but proved flaky
+    // (under any real CPU contention, e.g. the test suite's own parallelism, the baseline solve
+    // itself reads as slower and the whole pass gets skipped even for a genuinely cheap scenario,
+    // silently reintroducing this exact bug nondeterministically). Bounding by total OWNED
+    // environment-building count instead is deterministic and still tracks packing cost directly:
+    // each owned building widens that type's placement-variable integer range in
+    // `solve_building_packing`'s ILP (see its own doc comment), so more owned buildings means a
+    // larger branch & bound regardless of system load. Confirmed against both known cases: the
+    // reported bug's 3+3+1=7 owned buildings should run this pass, `test_large_multi_facility_
+    // config_stays_fast`'s 7+9+3=19 should not.
+    let total_environment_buildings: u32 = ENVIRONMENT_BUILDINGS
+        .iter()
+        .map(|&(building, _)| facility_counts.get_count(building))
+        .sum();
+    const MAX_ENVIRONMENT_BUILDINGS_FOR_EXCLUSION_PASS: u32 = 12;
+
+    let mut environment_excluded: HashSet<String> = HashSet::new();
+    // Bounds this pass the same way `MAX_MARGINAL_EXCLUSIONS` bounds the one inside
+    // `solve_environment_and_facility_allocation` — each exclusion re-runs that entire pipeline
+    // (itself not free), so this caps the added cost to a small fixed multiple rather than letting
+    // it scale with how many environment-gated chains are in play.
+    const MAX_ENVIRONMENT_EXCLUSIONS: u32 = 3;
+    for _ in 0..MAX_ENVIRONMENT_EXCLUSIONS {
+        if total_environment_buildings > MAX_ENVIRONMENT_BUILDINGS_FOR_EXCLUSION_PASS {
+            break;
+        }
+        let allocation =
+            solve_facility_allocation(&item_map, &candidates, facility_counts, &coverage_bounds, &byproduct_floors);
+        let eff_by_name: HashMap<&str, &ProductionEfficiency> =
+            candidates.iter().map(|e| (e.item.name.as_str(), e)).collect();
+        let environment_assignment = build_environment_assignment(&item_map, &allocation, &eff_by_name, &placements);
+        let grower_assignment =
+            build_grower_assignment(items, &allocation, &eff_by_name, facility_counts, &environment_assignment);
+        let current_total =
+            total_final_value(items, &item_map, &allocation, &eff_by_name, &grower_assignment, &environment_assignment);
+
+        // Only a chain that's (a) currently actually producing something (excluding a chain
+        // that's already at zero can't possibly free up coverage anyone else can use) and (b)
+        // touches an environment-gated facility whose (facility_type, mode) pair is ALSO touched
+        // by some OTHER chain among ALL original candidates (no genuine alternative claimant, no
+        // possible improvement from excluding it) is worth the cost of a full trial re-solve.
+        // Sorted for determinism, same reason as every other exclusion pass in this function.
+        let mut environment_pairs: HashMap<&str, HashSet<(&str, &str)>> = HashMap::new();
+        for eff in &effs {
+            for (facility, item_name, _) in &eff.facility_demand {
+                let Some(&(facility_type, _)) =
+                    crate::coverage::ENVIRONMENT_GATED_FACILITIES.iter().find(|(f, _)| f == facility)
+                else {
+                    continue;
+                };
+                if let Some(env) = item_map.get(item_name.as_str()).and_then(|i| i.environment.as_deref()) {
+                    environment_pairs.entry(eff.item.name.as_str()).or_default().insert((facility_type, env));
+                }
+            }
+        }
+        let contested_pairs: HashSet<(&str, &str)> = {
+            let mut counts: HashMap<(&str, &str), HashSet<&str>> = HashMap::new();
+            for (&chain, pairs) in &environment_pairs {
+                for &pair in pairs {
+                    counts.entry(pair).or_default().insert(chain);
+                }
+            }
+            counts.into_iter().filter(|(_, chains)| chains.len() > 1).map(|(pair, _)| pair).collect()
+        };
+        // One representative per contested pair (the first still-producing, not-yet-excluded
+        // candidate touching it), not every chain touching one — a full trial re-solve here reruns
+        // the entire coverage-packing pipeline (not cheap, unlike the LP-only marginal-exclusion
+        // pass above), so this bounds the trial count by how many distinct SCARCE coverage pools
+        // are actually contested rather than by how many chains happen to touch one (confirmed
+        // needed live: without this, a scenario with many environment-gated candidates but no
+        // actual coverage-choice bug took 6.7s instead of under 1s, retrying every touching chain
+        // to no benefit).
+        let mut trial_candidates: Vec<&str> = contested_pairs
+            .iter()
+            .filter_map(|&pair| {
+                candidates
+                    .iter()
+                    .find(|eff| {
+                        !environment_excluded.contains(&eff.item.name)
+                            && environment_pairs
+                                .get(eff.item.name.as_str())
+                                .is_some_and(|pairs| pairs.contains(&pair))
+                            && {
+                                let rate = allocation.get(eff.item.name.as_str()).copied().unwrap_or(0.0);
+                                final_rate_for(items, &item_map, eff, rate, &grower_assignment, &environment_assignment)
+                                    > 0.0
+                            }
+                    })
+                    .map(|eff| eff.item.name.as_str())
+            })
+            .collect::<HashSet<&str>>()
+            .into_iter()
+            .collect();
+        trial_candidates.sort_unstable();
+
+        let mut improved = false;
+        for candidate_name in trial_candidates {
+            let mut test_excluded = environment_excluded.clone();
+            test_excluded.insert(candidate_name.to_string());
+            let test_effs: Vec<ProductionEfficiency> =
+                effs.iter().filter(|e| !test_excluded.contains(&e.item.name)).cloned().collect();
+            let Some((test_mode_counts, test_placements, test_layouts, test_coverage_bounds, test_candidates)) =
+                solve_environment_and_facility_allocation(
+                    items,
+                    &item_map,
+                    &test_effs,
+                    facility_counts,
+                    &byproduct_floors,
+                )
+            else {
+                continue;
+            };
+            let test_allocation = solve_facility_allocation(
+                &item_map,
+                &test_candidates,
+                facility_counts,
+                &test_coverage_bounds,
+                &byproduct_floors,
+            );
+            let test_eff_by_name: HashMap<&str, &ProductionEfficiency> =
+                test_candidates.iter().map(|e| (e.item.name.as_str(), e)).collect();
+            let test_environment =
+                build_environment_assignment(&item_map, &test_allocation, &test_eff_by_name, &test_placements);
+            let test_growers = build_grower_assignment(
+                items,
+                &test_allocation,
+                &test_eff_by_name,
+                facility_counts,
+                &test_environment,
+            );
+            let test_total = total_final_value(
+                items,
+                &item_map,
+                &test_allocation,
+                &test_eff_by_name,
+                &test_growers,
+                &test_environment,
+            );
+            if test_total > current_total + 1e-9 {
+                environment_excluded.insert(candidate_name.to_string());
+                mode_counts = test_mode_counts;
+                placements = test_placements;
+                layouts = test_layouts;
+                coverage_bounds = test_coverage_bounds;
+                candidates = test_candidates;
+                improved = true;
+                break;
+            }
+        }
+        if !improved {
+            break;
+        }
+    }
+
+    // `candidates` has now settled (no stranded chains, and no environment-coverage exclusion left
+    // to try) — solve once more against it so `allocation`/`eff_by_name`/`grower_assignment` all
+    // borrow from a value that lives for the rest of the function, instead of threading trial
+    // values out through the borrow checker. Cheap: this problem size solves in well under a
+    // millisecond. `mode_counts` and `placements` (environment coverage) were already solved above,
+    // reused as-is.
     let allocation =
         solve_facility_allocation(&item_map, &candidates, facility_counts, &coverage_bounds, &byproduct_floors);
     let eff_by_name: HashMap<&str, &ProductionEfficiency> =
@@ -3179,20 +3448,25 @@ pub fn find_production_plan(
 
             let owned = facility_counts.get_count(name);
 
-            // A dedicated unit only ever needs to cover a contributor's own fractional demand, so
-            // rounding UP to the next whole unit (never down) guarantees it's never under-supplied
-            // relative to the shared-time version. Every contributor's rounded-up need is
-            // guaranteed to fit within what's owned by this point (the exclusion loop in
-            // `find_production_plan` already resolved any contention before this code runs), so
-            // whole-unit dedication always applies; the leftover (if any) is genuinely idle
-            // capacity, same concept as a grower's idle plots.
-            let needed: Vec<u32> = contributors.iter().map(|(_, _, f, _)| f.ceil() as u32).collect();
+            // A dedicated unit only ever needs to cover a contributor's own need, so rounding UP
+            // to the next whole unit (never down) guarantees it's never under-supplied relative to
+            // the continuous LP's solution. Ceiling every contributor independently and summing
+            // can still occasionally overshoot `owned` by a little (e.g. several small
+            // contributors each just over a whole-unit boundary), even though the exclusion loop
+            // in `find_production_plan` already resolved genuine distinct-recipe contention — so
+            // rather than assume it never happens, allocate greedily in `contributors`' existing
+            // most-profitable-first order and cap each grant at whatever's left, guaranteeing the
+            // total never exceeds `owned` by construction instead of asserting it and risking a
+            // panic on a rare rounding edge case.
+            let mut needed: Vec<u32> = Vec::with_capacity(contributors.len());
+            let mut remaining = owned;
+            for (_, _, units_needed, _) in &contributors {
+                let want = units_needed.ceil() as u32;
+                let give = want.min(remaining);
+                needed.push(give);
+                remaining -= give;
+            }
             let total_needed: u32 = needed.iter().sum();
-            debug_assert!(
-                total_needed <= owned,
-                "processor contention should have been resolved by find_production_plan's \
-                 exclusion loop before coin_items is built"
-            );
 
             let mut steps: Vec<PlanStep> = contributors
                 .iter()

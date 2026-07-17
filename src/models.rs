@@ -458,39 +458,50 @@ pub struct ProductionEfficiency {
 /// Multiple facilities of the same type allow for parallel production,
 /// reducing overall production time.
 ///
-/// Backed by a name → (count, level) map rather than fixed struct fields, so new facilities
-/// (of which the new beta has many — see `BETA_NOTES.md`) can be added without touching this
-/// struct's definition or any of its call sites.
+/// Backed by a name → tiers map rather than fixed struct fields, so new facilities (of which
+/// the new beta has many — see `BETA_NOTES.md`) can be added without touching this struct's
+/// definition or any of its call sites.
+///
+/// Each facility can own several TIERS — e.g. 5 plots upgraded to level 3 and 4 more upgraded
+/// to level 5 — since a player commonly upgrades some but not all of their plots of a given
+/// facility type. A tier's units aren't walled off from lower-level recipes: an item requiring
+/// level R can run on ANY tier whose level is >= R (a level-5 plot can still run a level-3
+/// recipe), so [`FacilityCounts::capacity_at_level`] sums every tier meeting that bar rather
+/// than just the tier matching a level exactly.
 ///
 /// # Example
 ///
 /// ```
 /// use aniimax::models::FacilityCounts;
 ///
-/// let counts = FacilityCounts::from_pairs(&[
+/// let mut counts = FacilityCounts::from_pairs(&[
 ///     ("Farmland", 4, 2),      // 4 plots at level 2
 ///     ("Woodland", 2, 1),      // 2 plots at level 1
 ///     ("Mineral Pile", 1, 1),
 /// ]);
+/// counts.add_tier("Farmland", 3, 4); // + 3 more plots upgraded to level 4
 ///
-/// assert_eq!(counts.get_count("Farmland"), 4);
-/// assert_eq!(counts.get_level("Farmland"), 2);
+/// assert_eq!(counts.get_count("Farmland"), 7);   // 4 + 3, level-agnostic total
+/// assert_eq!(counts.get_level("Farmland"), 4);    // highest tier owned
+/// assert_eq!(counts.capacity_at_level("Farmland", 2), 7); // both tiers can run a level-2 recipe
+/// assert_eq!(counts.capacity_at_level("Farmland", 4), 3); // only the level-4 tier can
 /// // Facilities not set default to count/level 1 (matches old "unknown facility" behavior).
 /// assert_eq!(counts.get_count("Carousel Mill"), 1);
 /// ```
 #[derive(Debug, Clone)]
 pub struct FacilityCounts {
-    facilities: std::collections::HashMap<String, (u32, u32)>,
-    /// Level reported for any facility not explicitly `set()` (normally 1). Used by
-    /// [`FacilityCounts::show_all_levels`] to report every facility as maximally unlocked.
-    default_level: u32,
+    facilities: std::collections::HashMap<String, Vec<(u32, u32)>>,
+    /// (count, level) reported for any facility not explicitly `set()`/`add_tier()`'d — a single
+    /// implicit tier, normally `(1, 1)`. Used by [`FacilityCounts::show_all_levels`] to report
+    /// every facility as maximally unlocked.
+    default_tier: (u32, u32),
 }
 
 impl Default for FacilityCounts {
     fn default() -> Self {
         Self {
             facilities: std::collections::HashMap::new(),
-            default_level: 1,
+            default_tier: (1, 1),
         }
     }
 }
@@ -501,7 +512,9 @@ impl FacilityCounts {
         Self::default()
     }
 
-    /// Builds a `FacilityCounts` from a list of `(facility_name, count, level)` triples.
+    /// Builds a `FacilityCounts` from a list of `(facility_name, count, level)` triples, one
+    /// single-tier facility per entry (a repeated name overwrites the earlier one — use
+    /// [`FacilityCounts::add_tier`] to accumulate multiple tiers for the same facility instead).
     pub fn from_pairs(pairs: &[(&str, u32, u32)]) -> Self {
         let mut fc = Self::new();
         for (name, count, level) in pairs {
@@ -515,17 +528,40 @@ impl FacilityCounts {
     pub fn show_all_levels() -> Self {
         Self {
             facilities: std::collections::HashMap::new(),
-            default_level: 99,
+            default_tier: (1, 99),
         }
     }
 
-    /// Sets the count and level for a facility by name.
+    /// Sets a facility to a single tier, replacing any tiers set for it previously. The common
+    /// case for a facility owned entirely at one level.
     pub fn set(&mut self, facility: &str, count: u32, level: u32) -> &mut Self {
-        self.facilities.insert(facility.to_string(), (count, level));
+        self.facilities.insert(facility.to_string(), vec![(count, level)]);
         self
     }
 
-    /// Returns the count for a given facility name.
+    /// Appends one more owned tier to a facility (e.g. "5 more plots upgraded to level 4"),
+    /// keeping whatever tiers were already set rather than replacing them. Call this once per
+    /// tier to build up a facility owned at multiple levels.
+    pub fn add_tier(&mut self, facility: &str, count: u32, level: u32) -> &mut Self {
+        self.facilities.entry(facility.to_string()).or_default().push((count, level));
+        self
+    }
+
+    /// Replaces all of a facility's tiers wholesale with the given list.
+    pub fn set_tiers(&mut self, facility: &str, tiers: Vec<(u32, u32)>) -> &mut Self {
+        self.facilities.insert(facility.to_string(), tiers);
+        self
+    }
+
+    /// Returns every owned tier `(count, level)` for a facility, or a single implicit default
+    /// tier if it was never explicitly set.
+    pub fn tiers(&self, facility: &str) -> Vec<(u32, u32)> {
+        self.facilities.get(facility).cloned().unwrap_or_else(|| vec![self.default_tier])
+    }
+
+    /// Returns the total owned count for a given facility name, summed across every tier
+    /// regardless of level — the level-agnostic "how many physical units do you own" question
+    /// (used for things like environment-building coverage, which has no level of its own).
     ///
     /// # Arguments
     ///
@@ -535,10 +571,13 @@ impl FacilityCounts {
     ///
     /// The number of that facility type available. Returns 1 for unset/unknown facility types.
     pub fn get_count(&self, facility: &str) -> u32 {
-        self.facilities.get(facility).map(|(c, _)| *c).unwrap_or(1)
+        self.tiers(facility).iter().map(|(c, _)| c).sum()
     }
 
-    /// Returns the level for a given facility name.
+    /// Returns the highest owned tier's level for a given facility name — the ceiling of what
+    /// that facility type can produce at all, ignoring how much capacity exists at that ceiling
+    /// (see [`FacilityCounts::capacity_at_level`] for the count actually usable by an item
+    /// requiring a specific level).
     ///
     /// # Arguments
     ///
@@ -548,10 +587,17 @@ impl FacilityCounts {
     ///
     /// The level of that facility type. Returns 1 for unset/unknown facility types.
     pub fn get_level(&self, facility: &str) -> u32 {
-        self.facilities
-            .get(facility)
-            .map(|(_, l)| *l)
-            .unwrap_or(self.default_level)
+        self.tiers(facility).iter().map(|(_, l)| *l).max().unwrap_or(self.default_tier.1)
+    }
+
+    /// Returns how many owned units of a facility can produce an item requiring at least
+    /// `required_level` — the sum of every tier whose own level meets that bar, since a
+    /// higher-level plot can always run a lower-level recipe too (an upgrade never takes
+    /// capability away). This is the number that actually bounds an item's achievable rate;
+    /// [`FacilityCounts::get_count`] (level-agnostic total) is too generous whenever tiers are
+    /// mixed, and [`FacilityCounts::get_level`] alone doesn't say how much capacity exists there.
+    pub fn capacity_at_level(&self, facility: &str, required_level: u32) -> u32 {
+        self.tiers(facility).iter().filter(|(_, l)| *l >= required_level).map(|(c, _)| c).sum()
     }
 
     /// Checks if a facility can produce an item at the given required level.
@@ -563,9 +609,9 @@ impl FacilityCounts {
     ///
     /// # Returns
     ///
-    /// `true` if the facility level is >= required level
+    /// `true` if at least one owned tier's level is >= required level
     pub fn can_produce(&self, facility: &str, required_level: u32) -> bool {
-        self.get_level(facility) >= required_level
+        self.capacity_at_level(facility, required_level) > 0
     }
 }
 

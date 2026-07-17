@@ -889,8 +889,13 @@ pub struct JsPlanInput {
     /// `crate::optimizer::byproduct_resource_name`.
     #[serde(default = "default_currency")]
     pub currency: String,
+    /// Maps facility name to a LIST of owned tiers, e.g. `"Farmland": [{count: 5, level: 3},
+    /// {count: 4, level: 5}]` for 5 plots upgraded to level 3 and 4 more upgraded to level 5 —
+    /// see `crate::models::FacilityCounts`'s doc comment for why a player owning a facility type
+    /// at mixed levels needs more than one `(count, level)` pair. The overwhelmingly common case
+    /// of "all owned at one level" is just a one-element list.
     #[serde(default)]
-    pub facilities: std::collections::HashMap<String, JsFacilityConfig>,
+    pub facilities: std::collections::HashMap<String, Vec<JsFacilityConfig>>,
     #[serde(default)]
     pub modules: JsModuleLevels,
     #[serde(default)]
@@ -906,8 +911,8 @@ impl JsPlanInput {
     /// Builds a [`FacilityCounts`] from the `facilities` map.
     fn facility_counts(&self) -> FacilityCounts {
         let mut fc = FacilityCounts::new();
-        for (name, cfg) in &self.facilities {
-            fc.set(name, cfg.count, cfg.level);
+        for (name, tiers) in &self.facilities {
+            fc.set_tiers(name, tiers.iter().map(|t| (t.count, t.level)).collect());
         }
         fc
     }
