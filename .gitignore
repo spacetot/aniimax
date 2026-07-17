@@ -22,8 +22,8 @@ target
 # WASM build output
 web/pkg/
 
-# Local Claude Code dev-server config
+# Local editor/dev-tooling config
 .claude/
 
-# Internal design/change-log notes, kept outside the repo
+# Internal working notes, kept outside the repo
 BETA_NOTES.md
