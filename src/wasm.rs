@@ -53,8 +53,6 @@ pub struct JsOptimizeInput {
     #[serde(default)]
     pub parallel: bool,
     #[serde(default)]
-    pub exclude_wheat: bool,
-    #[serde(default)]
     pub facilities: std::collections::HashMap<String, JsFacilityConfig>,
     #[serde(default)]
     pub modules: JsModuleLevels,
@@ -725,17 +723,8 @@ pub fn optimize(input_json: &str) -> String {
         crafting_module: input.modules.crafting_module,
     };
 
-    let mut items = get_embedded_items();
-    
-    // Filter out wheat-related items if requested
-    if input.exclude_wheat {
-        items.retain(|item| {
-            let name = item.name.to_lowercase();
-            // Exclude wheat, high_speed_wheat, wheatmeal, super_wheatmeal
-            !name.contains("wheat")
-        });
-    }
-    
+    let items = get_embedded_items();
+
     let efficiencies = calculate_efficiencies(&items, &input.currency, &facility_counts, &module_levels);
 
     if efficiencies.is_empty() {
@@ -898,8 +887,6 @@ pub struct JsPlanInput {
     pub facilities: std::collections::HashMap<String, Vec<JsFacilityConfig>>,
     #[serde(default)]
     pub modules: JsModuleLevels,
-    #[serde(default)]
-    pub exclude_wheat: bool,
     /// See `crate::optimizer::find_production_plan`'s doc comment on `prioritize_byproducts` —
     /// defaults to `true` (checked by default in the UI) since Wood Blocks/Mineral Sand can be a
     /// real in-game constraint players can't just buy their way around.
@@ -1185,16 +1172,7 @@ pub fn find_plan(input_json: &str) -> String {
         crafting_module: input.modules.crafting_module,
     };
 
-    let mut items = get_embedded_items();
-
-    // Filter out wheat-related items if requested
-    if input.exclude_wheat {
-        items.retain(|item| {
-            let name = item.name.to_lowercase();
-            // Exclude wheat, quick_wheat, wheatmeal
-            !name.contains("wheat")
-        });
-    }
+    let items = get_embedded_items();
 
     match find_production_plan(
         &items,
