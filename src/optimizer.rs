@@ -14,23 +14,6 @@ use crate::models::{
     ProductionPath, ProductionStep, SeedRequirement,
 };
 
-/// Milliseconds since an arbitrary but consistent epoch, for measuring elapsed wall-clock time.
-/// `std::time::Instant::now()` panics under `wasm32-unknown-unknown` (no OS clock to read), so the
-/// wasm build reads the browser's clock via `js-sys` instead; the native build (CLI, tests) uses
-/// the real `Instant` API. Only ever compared against another `now_ms()` call, so the two
-/// platforms' different epochs don't need to agree with each other.
-#[cfg(target_arch = "wasm32")]
-fn now_ms() -> f64 {
-    js_sys::Date::now()
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn now_ms() -> f64 {
-    use std::sync::OnceLock;
-    static START: OnceLock<std::time::Instant> = OnceLock::new();
-    START.get_or_init(std::time::Instant::now).elapsed().as_secs_f64() * 1000.0
-}
-
 /// Calculates the optimal allocation of facilities to minimize production time
 /// when producing multiple different materials.
 /// 
@@ -3122,7 +3105,29 @@ pub fn find_production_plan_with_progress(
     // try the alternative and compare real totals, the same "try excluding, keep it only if it
     // truly helps" pattern `solve_environment_and_facility_allocation`'s own marginal-exclusion
     // pass already uses one level down (for facility-plot rounding rather than environment-coverage
-    // choice).
+    // choice). A shared PROCESSOR facility (not just an environment building) can hide the exact
+    // same kind of mistake: `solve_environment_and_facility_allocation`'s own processor-contention
+    // resolution is a greedy, rate_per_second-ranked choice with no visibility into whether the
+    // chain it favors is starving a different chain sharing that same processor, so this pass's
+    // candidate search also includes any chain currently occupying a processor more than one
+    // candidate could use, not just chains touching a contested environment mode; and every round
+    // tries EVERY single candidate AND EVERY PAIR, keeping whichever shows the best total overall
+    // -- not just whichever single candidate sorts first, and NOT preferring a single exclusion
+    // just because it found SOME improvement. That second point used to be a real bug: a single
+    // exclusion that shows a small real improvement got applied and locked in immediately
+    // (`environment_excluded` is permanent once a round applies to it), which permanently
+    // prevented ever trying that SAME candidate paired with another one from a clean baseline --
+    // even when the pair would have unlocked a dramatically bigger improvement the single-only
+    // choice was quietly blocking. See
+    // `test_environment_coverage_choice_finds_a_real_improvement_even_when_incomplete`'s doc
+    // comment for a concrete, confirmed-by-hand case of exactly this. This still isn't an
+    // exhaustive search over every possible COMBINATION of exclusions (that would require trying
+    // every subset of every shared-resource group, and each trial reruns the full packing
+    // pipeline, making a truly exhaustive search too slow for a live tool on some scenarios) --
+    // just singles and pairs, repeated across up to `MAX_ENVIRONMENT_EXCLUSIONS` rounds (each
+    // round's pair search gets its own fresh wall-clock budget, not one shared across rounds,
+    // since an earlier round's search must never starve a later round that needs its own pair
+    // search to find a genuinely different improvement against the new baseline).
     //
     // Each trial here reruns that ENTIRE pipeline (packing ILP included), unlike the cheap LP-only
     // marginal-exclusion pass inside it, so this pass is bounded by total OWNED environment-
@@ -3143,17 +3148,6 @@ pub fn find_production_plan_with_progress(
     // (itself not free), so this caps the added cost to a small fixed multiple rather than letting
     // it scale with how many environment-gated chains are in play.
     const MAX_ENVIRONMENT_EXCLUSIONS: u32 = 3;
-    // Wall-clock budget for the pairs fallback below, shared across every outer round: a fixed
-    // trial count can't account for how expensive each trial is on a given input (each pair trial
-    // reruns the same full pipeline as a single-candidate trial, and that cost itself scales with
-    // owned environment-building count), so a handful of pairs on one scenario can be near-instant
-    // while the same count on another takes many seconds. The pairs fallback only fires when
-    // single exclusions already found nothing to improve, an inherently rare path, so a bounded
-    // time budget keeps that rare path from ever feeling hung without needing to guess a trial
-    // count that's right for every input. Set lazily, the first time it's actually needed, so the
-    // budget measures time spent ON PAIRS specifically, not time already spent on the (possibly
-    // slow in its own right) single-candidate passes before it.
-    let mut pair_exclusion_deadline_ms: Option<f64> = None;
     for _ in 0..MAX_ENVIRONMENT_EXCLUSIONS {
         if total_environment_buildings > MAX_ENVIRONMENT_BUILDINGS_FOR_EXCLUSION_PASS {
             break;
@@ -3217,29 +3211,253 @@ pub fn find_production_plan_with_progress(
         // Owned `String`s, not `&str` borrowed from `candidates`: the exclusion trials below
         // reassign `candidates` on success, which a borrow tied to the pre-trial `candidates`
         // couldn't survive across.
-        let mut trial_candidates: Vec<String> = contested_modes
-            .iter()
-            .filter_map(|&mode| {
-                let touches_mode = |eff: &&ProductionEfficiency| {
-                    !environment_excluded.contains(&eff.item.name)
-                        && environment_modes.get(eff.item.name.as_str()).is_some_and(|modes| modes.contains(mode))
-                };
-                candidates
-                    .iter()
-                    .filter(touches_mode)
-                    .find(|eff| {
-                        let rate = allocation.get(eff.item.name.as_str()).copied().unwrap_or(0.0);
-                        final_rate_for(items, &item_map, eff, rate, &grower_assignment, &environment_assignment) > 0.0
-                    })
-                    .or_else(|| candidates.iter().filter(touches_mode).min_by_key(|eff| &eff.item.name))
-                    .map(|eff| eff.item.name.clone())
-            })
-            .collect::<HashSet<String>>()
-            .into_iter()
-            .collect();
+        let mut trial_candidate_set: HashSet<String> = HashSet::new();
+        for &mode in &contested_modes {
+            let touches_mode = |eff: &&ProductionEfficiency| {
+                !environment_excluded.contains(&eff.item.name)
+                    && environment_modes.get(eff.item.name.as_str()).is_some_and(|modes| modes.contains(mode))
+            };
+            // EVERY currently-producing candidate touching this mode, not just the first one
+            // found: two different crops can both be producing off the SAME contested mode at
+            // once (e.g. one covered by a Cooling Unit, the other by a Sunlamp both giving
+            // "Cool"), and only trying whichever happens to be first in `candidates`'s iteration
+            // order can miss the one actually worth excluding (confirmed by hand: `quick_rose`
+            // and `walnut` were simultaneously producing for the same contested mode, but
+            // iteration order meant only `walnut` ever got a trial, silently hiding `quick_rose`
+            // -- the one whose exclusion is needed for the real improvement documented on
+            // `test_environment_coverage_choice_finds_a_real_improvement_even_when_incomplete`).
+            let producing: Vec<&String> = candidates
+                .iter()
+                .filter(touches_mode)
+                .filter(|eff| {
+                    let rate = allocation.get(eff.item.name.as_str()).copied().unwrap_or(0.0);
+                    final_rate_for(items, &item_map, eff, rate, &grower_assignment, &environment_assignment) > 0.0
+                })
+                .map(|eff| &eff.item.name)
+                .collect();
+            if producing.is_empty() {
+                // A mode can ALSO end up with its coverage claimed by a chain that produces
+                // nothing at all once every other constraint settles (see this pass's own doc
+                // comment above); fall back to any not-yet-excluded candidate touching the mode
+                // rather than silently dropping it.
+                if let Some(eff) = candidates.iter().filter(touches_mode).min_by_key(|eff| &eff.item.name) {
+                    trial_candidate_set.insert(eff.item.name.clone());
+                }
+            } else {
+                for name in producing {
+                    trial_candidate_set.insert(name.clone());
+                }
+            }
+        }
+
+        // A shared PROCESSOR facility can hide the same joint suboptimality a contested
+        // environment mode can: `solve_environment_and_facility_allocation`'s own marginal-
+        // exclusion pass resolves processor contention greedily, by raw rate_per_second, with no
+        // way to know that the chain it favors might be starving a DIFFERENT chain sharing the
+        // same processor. Every chain CURRENTLY occupying a processor more than one distinct
+        // candidate (across the full, unexcluded `effs`) could possibly use is added here so its
+        // solo exclusion gets a trial below, the same as a contested-mode candidate; the RAW
+        // continuous LP rate, not `final_rate_for`'s grower-rounded one, since a chain occupying a
+        // processor's dedicated unit (see `build_processor_usage`'s doc comment: every contributor
+        // needs exactly one whole unit regardless of its own fraction) is still "using" that
+        // processor even when its own rate is too small for grower-plot rounding to show any whole
+        // output.
+        let mut processor_chains: HashMap<&str, HashSet<&str>> = HashMap::new();
+        for eff in &effs {
+            for (facility, _item_name, utilization) in &eff.facility_demand {
+                if *utilization <= 0.0 || is_grower_facility(items, facility) {
+                    continue;
+                }
+                processor_chains.entry(facility.as_str()).or_default().insert(eff.item.name.as_str());
+            }
+        }
+        let contested_processors: HashSet<&str> =
+            processor_chains.into_iter().filter(|(_, chains)| chains.len() > 1).map(|(f, _)| f).collect();
+        // One group per contested processor: every not-yet-excluded, currently-producing
+        // candidate using it. Kept separately from `trial_candidate_set` (below) so it can ALSO
+        // drive a dedicated, targeted exhaustive search over just that processor's own small
+        // candidate set (see the block right after this loop) -- catching "two candidates sharing
+        // one processor both need excluding together" directly and deterministically, rather than
+        // relying on the general single-candidate-plus-pairs search to stumble onto the exact
+        // right pair (it doesn't reliably: alphabetical tie-breaking among several EQUALLY-scored
+        // single exclusions can pick a candidate unrelated to the real fix, and once picked, that
+        // choice is permanent for the rest of this round, which can quietly prevent the two real
+        // candidates from ever being tried together at all in the same round).
+        // Sorted before iterating: `HashSet` iteration order is randomized per-process, and this
+        // loop's insertion order becomes `processor_groups`' order, which later determines
+        // tie-breaking (via a stable sort) among same-size groups in the dedicated exhaustive
+        // search below -- without sorting first, which of two equally-sized, equally-improving
+        // groups gets tried (and thus which winning combination gets applied, when they lead to
+        // different downstream totals) could differ from run to run of the exact same input.
+        let mut contested_processors_sorted: Vec<&str> = contested_processors.into_iter().collect();
+        contested_processors_sorted.sort_unstable();
+        let mut processor_groups: Vec<Vec<String>> = Vec::new();
+        for facility in contested_processors_sorted {
+            let group: Vec<String> = candidates
+                .iter()
+                .filter(|eff| !environment_excluded.contains(&eff.item.name))
+                .filter(|eff| eff.facility_demand.iter().any(|(f, _, u)| f.as_str() == facility && *u > 0.0))
+                .filter(|eff| allocation.get(eff.item.name.as_str()).copied().unwrap_or(0.0) > 0.0)
+                .map(|eff| eff.item.name.clone())
+                .collect();
+            for name in &group {
+                trial_candidate_set.insert(name.clone());
+            }
+            processor_groups.push(group);
+        }
+        processor_groups.sort_unstable();
+        processor_groups.dedup();
+
+        // A shared RAW INGREDIENT can hide a joint suboptimality that neither the contested-mode
+        // nor the contested-processor grouping above can see: two different chains can EACH grow
+        // their OWN copy of the SAME environment-gated raw item internally (e.g. two different
+        // incense recipes each growing their own `quick_rose`), competing for that raw item's
+        // Farmland/environment capacity even though they're never simultaneously the one thing
+        // with positive LP rate -- the solver picks whichever ONE of them is locally best each
+        // solve, so the contested-processor grouping above (which only includes candidates
+        // CURRENTLY producing) never sees them together, and the contested-mode grouping only
+        // includes a candidate once it's actually producing too. A candidate can still be
+        // "pinning" the coverage-packing pre-solve's static per-plot pricing toward that raw item
+        // even while its OWN current rate is zero (see this pass's own doc comment on phantom
+        // coverage), so this group is NOT filtered by current production status at all -- every
+        // not-yet-excluded chain that needs the ingredient is included, and the exhaustive search
+        // below decides which (if any) combination is worth excluding. Confirmed by hand: this is
+        // exactly the pattern behind `{premium_rose_incense, rose_incense}` both needing exclusion
+        // together (see `test_environment_coverage_choice_finds_a_real_improvement_even_when_incomplete`).
+        let mut raw_item_chains: HashMap<&str, HashSet<&str>> = HashMap::new();
+        for eff in &effs {
+            for (facility, item_name, _) in &eff.facility_demand {
+                if !crate::coverage::ENVIRONMENT_GATED_FACILITIES.iter().any(|(f, _)| f == facility) {
+                    continue;
+                }
+                if item_map.get(item_name.as_str()).and_then(|i| i.environment.as_deref()).is_some() {
+                    raw_item_chains.entry(item_name.as_str()).or_default().insert(eff.item.name.as_str());
+                }
+            }
+        }
+        let mut ingredient_groups: Vec<Vec<String>> = Vec::new();
+        for (_, chains) in raw_item_chains.into_iter().filter(|(_, chains)| chains.len() > 1) {
+            let mut group: Vec<String> = chains
+                .into_iter()
+                .filter(|&name| !environment_excluded.contains(name))
+                .map(String::from)
+                .collect();
+            group.sort_unstable();
+            ingredient_groups.push(group);
+        }
+        ingredient_groups.sort_unstable();
+        ingredient_groups.dedup();
+
+        let mut trial_candidates: Vec<String> = trial_candidate_set.into_iter().collect();
         trial_candidates.sort_unstable();
 
-        let mut improved = false;
+        type ExclusionOutputs = (
+            HashMap<(&'static str, &'static str), u32>,
+            HashMap<&'static str, Vec<(crate::coverage::Placement, u32)>>,
+            HashMap<&'static str, Vec<Vec<crate::coverage::Placement>>>,
+            HashMap<(String, String), u32>,
+            Vec<ProductionEfficiency>,
+        );
+        let mut best: Option<(f64, Vec<String>, ExclusionOutputs)> = None;
+
+        // Dedicated exhaustive search over each contested processor's or shared ingredient's OWN
+        // small candidate set, tried FIRST and directly: every non-empty subset of that one
+        // group's candidates (bounded, since a real group here is a handful of recipes sharing a
+        // couple of owned processor units or one raw ingredient, not hundreds -- capped
+        // defensively regardless). This is what reliably catches "two candidates need excluding
+        // together" (confirmed by hand: `{premium_rose_incense, rose_incense}`, both internally
+        // growing their own `quick_rose`, together unlocking 46.64230303030303 coins/sec,
+        // comfortably above the Farmland=28 baseline of 45.71963636363636); the general
+        // single-candidate-plus-pairs search below can miss this exact pair even though it tries
+        // pairs too, because several candidates can tie at the SAME improved total, and
+        // alphabetical tie-breaking among them can permanently pick an unrelated one for the rest
+        // of the round, in effect burying the two candidates that actually needed to be excluded
+        // together before they ever get tried as a pair.
+        // Kept small (unlike the small handful a processor group tends to have, an ingredient
+        // group can be as large as however many recipes happen to share one raw item) and bounded
+        // with a wall-clock deadline: 2^6 - 1 = 63 subsets is already a meaningfully complete
+        // search for the common case, and the deadline is the real backstop against a
+        // pathological input with several large groups each costing a full pipeline re-solve per
+        // subset. Groups are tried smallest-first so a cheap, common 2-3-candidate group (the
+        // usual case) always gets its full exhaustive search before a rare large one can eat the
+        // whole budget.
+        const MAX_PROCESSOR_GROUP_SIZE: usize = 6;
+        // Total subset-evaluation budget for this whole phase, generous enough to fully cover
+        // every group scenario actually observed (confirmed by hand: a 16-group case needing
+        // 160-208 total subsets across successive rounds) with real margin to spare, while still
+        // bounding worst-case work for a pathological input with many large groups.
+        const MAX_DEDICATED_SEARCH_EVALS: u32 = 400;
+        let mut sized_groups: Vec<&Vec<String>> = processor_groups
+            .iter()
+            .chain(ingredient_groups.iter())
+            .filter(|group| group.len() >= 2 && group.len() <= MAX_PROCESSOR_GROUP_SIZE)
+            .collect();
+        sized_groups.sort_by_key(|group| group.len());
+        // Decides which groups get searched BEFORE any solving starts, purely from each group's
+        // own size (a fixed, precomputable quantity, not live wall-clock time): keep taking
+        // groups smallest-first (as already sorted) until the next one would push the running
+        // total past budget, then stop. For the same candidate set this always keeps the exact
+        // same groups in the exact same order, regardless of machine speed or load -- unlike a
+        // wall-clock deadline, whose cutoff point (and therefore which groups get searched at
+        // all) depends on how fast the machine happens to be running at that moment. A real
+        // pathological input (many large groups) still gets bounded, by dropping the largest,
+        // costliest groups entirely rather than partially exploring whichever one the clock ran
+        // out on.
+        let mut budget_remaining = MAX_DEDICATED_SEARCH_EVALS;
+        let mut bounded_groups: Vec<&Vec<String>> = Vec::new();
+        for group in sized_groups {
+            let cost = (1u32 << group.len()) - 1;
+            if cost > budget_remaining {
+                break;
+            }
+            budget_remaining -= cost;
+            bounded_groups.push(group);
+        }
+        for group in bounded_groups {
+            let n = group.len();
+            let mut masks: Vec<u32> = (1..(1u32 << n)).collect();
+            masks.sort_by_key(|mask| mask.count_ones());
+            for mask in masks {
+                let to_exclude: Vec<&str> =
+                    (0..n).filter(|&i| mask & (1 << i) != 0).map(|i| group[i].as_str()).collect();
+                let Some((
+                    test_total,
+                    test_mode_counts,
+                    test_placements,
+                    test_layouts,
+                    test_coverage_bounds,
+                    test_candidates,
+                )) = try_environment_exclusion_set(
+                    items,
+                    &item_map,
+                    &effs,
+                    facility_counts,
+                    &byproduct_floors,
+                    &mut trial_count,
+                    on_progress,
+                    &environment_excluded,
+                    &to_exclude,
+                ) else {
+                    continue;
+                };
+                if test_total > current_total + 1e-9
+                    && best.as_ref().is_none_or(|(best_total, ..)| test_total > *best_total)
+                {
+                    best = Some((
+                        test_total,
+                        to_exclude.into_iter().map(String::from).collect(),
+                        (test_mode_counts, test_placements, test_layouts, test_coverage_bounds, test_candidates),
+                    ));
+                }
+            }
+        }
+
+        // Tries every single candidate AND every pair this round, keeping whichever shows the
+        // BEST total overall -- not just whichever single candidate sorts first, and NOT
+        // preferring singles over pairs just because a single already found SOME improvement.
+        // Compared against `best` above (already possibly set by the dedicated per-processor
+        // search), so this can still win if a single candidate or a cross-group pair beats
+        // whatever the per-processor search found.
         for candidate_name in &trial_candidates {
             let Some((test_total, test_mode_counts, test_placements, test_layouts, test_coverage_bounds, test_candidates)) =
                 try_environment_exclusion_set(
@@ -3256,35 +3474,31 @@ pub fn find_production_plan_with_progress(
             else {
                 continue;
             };
-            if test_total > current_total + 1e-9 {
-                environment_excluded.insert(candidate_name.clone());
-                mode_counts = test_mode_counts;
-                placements = test_placements;
-                layouts = test_layouts;
-                coverage_bounds = test_coverage_bounds;
-                candidates = test_candidates;
-                improved = true;
-                break;
+            if test_total > current_total + 1e-9 && best.as_ref().is_none_or(|(best_total, ..)| test_total > *best_total)
+            {
+                best = Some((
+                    test_total,
+                    vec![candidate_name.clone()],
+                    (test_mode_counts, test_placements, test_layouts, test_coverage_bounds, test_candidates),
+                ));
             }
         }
-        // A single exclusion only frees coverage if whatever's left over can actually use it; two
-        // unrelated chains can EACH individually look like the current best use of their own
-        // contested mode while jointly blocking a genuinely better third option (e.g. one chain
-        // pins a shared building's coverage toward a facility type that isn't actually profitable
-        // once a SEPARATE chain has already monopolized the downstream processor the real
-        // alternative needs), so neither one's solo exclusion trial ever shows an improvement even
-        // though excluding both together would. Bounded by `pair_exclusion_deadline` (shared
-        // across every outer round, see its own comment), not just by how many pairs
-        // `trial_candidates` could form; each pair trial costs as much as a full single-candidate
-        // trial, so trying every combination scales badly even though `trial_candidates` itself
-        // stays small.
-        if !improved && trial_candidates.len() > 1 {
-            let deadline_ms = *pair_exclusion_deadline_ms.get_or_insert_with(|| now_ms() + 2000.0);
-            'pairs: for i in 0..trial_candidates.len() {
-                for j in (i + 1)..trial_candidates.len() {
-                    if now_ms() >= deadline_ms {
-                        break 'pairs;
-                    }
+        // Each pair trial costs as much as a full single-candidate trial, so trying every
+        // combination scales as O(n^2) in `trial_candidates.len()`; this stays a small handful of
+        // candidates in every scenario seen so far. Bounded the same way as the dedicated-group
+        // search above: a fixed, precomputable total (here, how many candidates to include before
+        // C(k,2) would exceed budget) decided before any solving starts, not a live wall-clock
+        // deadline -- so the same input always tries the exact same pairs regardless of machine
+        // speed. `MAX_PAIR_SEARCH_EVALS` is comfortably above any n^2 seen so far (n=10 -> 45
+        // pairs) while still bounding a pathological input with many contested candidates.
+        const MAX_PAIR_SEARCH_EVALS: usize = 2000;
+        let mut pair_candidate_count = trial_candidates.len();
+        while pair_candidate_count > 1 && pair_candidate_count * (pair_candidate_count - 1) / 2 > MAX_PAIR_SEARCH_EVALS {
+            pair_candidate_count -= 1;
+        }
+        if pair_candidate_count > 1 {
+            for i in 0..pair_candidate_count {
+                for j in (i + 1)..pair_candidate_count {
                     let pair = [trial_candidates[i].as_str(), trial_candidates[j].as_str()];
                     let Some((
                         test_total,
@@ -3306,19 +3520,31 @@ pub fn find_production_plan_with_progress(
                     ) else {
                         continue;
                     };
-                    if test_total > current_total + 1e-9 {
-                        environment_excluded.insert(pair[0].to_string());
-                        environment_excluded.insert(pair[1].to_string());
-                        mode_counts = test_mode_counts;
-                        placements = test_placements;
-                        layouts = test_layouts;
-                        coverage_bounds = test_coverage_bounds;
-                        candidates = test_candidates;
-                        improved = true;
-                        break 'pairs;
+                    if test_total > current_total + 1e-9
+                        && best.as_ref().is_none_or(|(best_total, ..)| test_total > *best_total)
+                    {
+                        best = Some((
+                            test_total,
+                            vec![pair[0].to_string(), pair[1].to_string()],
+                            (test_mode_counts, test_placements, test_layouts, test_coverage_bounds, test_candidates),
+                        ));
                     }
                 }
             }
+        }
+        let mut improved = false;
+        if let Some((_, names, (test_mode_counts, test_placements, test_layouts, test_coverage_bounds, test_candidates))) =
+            best
+        {
+            for name in names {
+                environment_excluded.insert(name);
+            }
+            mode_counts = test_mode_counts;
+            placements = test_placements;
+            layouts = test_layouts;
+            coverage_bounds = test_coverage_bounds;
+            candidates = test_candidates;
+            improved = true;
         }
         if !improved {
             break;

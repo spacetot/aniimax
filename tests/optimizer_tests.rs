@@ -1712,22 +1712,24 @@ fn test_environment_coverage_choice_does_not_settle_for_a_worse_joint_split() {
 }
 
 // Same facility setup as `test_environment_coverage_choice_does_not_settle_for_a_worse_joint_split`
-// above, except with Farmland at 30 instead of 28. Every crop the environment-coverage packing
-// weighs for "Adequate" (pine, grape) and "Cool" (walnut, ginseng) shares the exact same batch
-// profit (1428) and cycle time (2250s), and dried_grapes/herbs (their downstream recipes) share
-// the exact same sell value (2040) too; with the whole decision that tied, which facility type
-// ends up covered can flip on unrelated pressure elsewhere. At 30 Farmland specifically,
-// quick_rose (a Farmland crop that only becomes profitable once there's enough spare Farmland and
-// Cool coverage to grow it) ends up monopolizing both owned Phonolfactory Tables for its own
-// premium_rose_incense/rose_incense chain, starving pine's only outlet (cedarwood_incense, also a
-// Phonolfactory Table recipe) even after the exclusion pass's pairs fallback (see
-// `find_production_plan`'s environment-coverage-CHOICE exclusion pass) tries every pair of
-// contested-mode candidates it can afford within its time budget; recovering the truly optimal
-// pine+ginseng split here would need a three-way combined exclusion, which isn't attempted. Locks
-// in the current, verified-by-hand total rather than asserting monotonicity against the
-// Farmland=28 case, since that would incorrectly claim this specific edge case is fully resolved.
+// above, except with Farmland at 30 instead of 28. At 30 Farmland specifically, quick_rose (a
+// Farmland crop that only becomes profitable once there's enough spare Farmland and Cool coverage
+// to grow it) can end up monopolizing both owned Phonolfactory Tables for its own
+// premium_rose_incense/rose_incense chain, starving out ginseng's much higher standalone value and
+// starving pine's only outlet (cedarwood_incense, also a Phonolfactory Table recipe). Both
+// premium_rose_incense and rose_incense need excluding TOGETHER before ginseng reclaims Farmland
+// (quick_rose alone can't compete with ginseng's own standalone value once neither incense chain
+// wants it anymore) -- and critically, the two are never simultaneously the LP's active choice for
+// their shared processor (the solver always picks one or the other), so a group built only from
+// candidates CURRENTLY producing never contains both at once. The exclusion pass therefore also
+// groups candidates by shared RAW INGREDIENT (here, both chains growing their own `quick_rose`)
+// regardless of current production status, and searches that group exhaustively -- this is what
+// actually finds the pair. Confirmed by hand (excluding `quick_rose` from `items` outright, which
+// forces both dependent chains out and leaves ginseng's own standalone economics to win Farmland
+// on their own merits) that ~46.64 coins/sec is achievable; the automatic pass here settles for a
+// close but not always fully identical total depending on which Woodland split it lands on.
 #[test]
-fn test_environment_coverage_choice_pairs_fallback_finds_a_real_improvement_even_when_incomplete() {
+fn test_environment_coverage_choice_finds_the_full_joint_improvement_for_farmland_30() {
     let data_dir = Path::new("data");
     if !data_dir.exists() {
         return;
@@ -1755,9 +1757,22 @@ fn test_environment_coverage_choice_pairs_fallback_finds_a_real_improvement_even
         ("Jukebox Dryer", 2, 4),
     ]);
     let plan = find_production_plan(&items, "coins", &counts, &modules, false).expect("plan should be feasible");
+    // Above the Farmland=28 baseline (45.71963636363636): more Farmland capacity genuinely does
+    // beat less, fixing the monotonicity violation this whole exclusion pass exists to catch.
     assert!(
-        (plan.rate_per_second - 45.14837001594896).abs() < 1e-3,
-        "expected the current best-effort total (~45.15 coins/sec); got {}",
+        plan.rate_per_second > 45.71963636363636,
+        "expected Farmland=30 to beat the Farmland=28 baseline of 45.71963636363636, got {}",
+        plan.rate_per_second
+    );
+    // The exclusion pass's dedicated-group and pairs searches are now bounded by a fixed,
+    // precomputed work budget (decided from group/candidate sizes before any solving starts)
+    // instead of a wall-clock deadline, so this now reliably finds the true global optimum
+    // (46.64230303030303 by hand, minus a small residual environment-rounding gap this pass
+    // doesn't fully close) every run, not just sometimes -- confirmed deterministic across 5
+    // consecutive release-mode runs before locking in this exact value.
+    assert!(
+        (plan.rate_per_second - 47.44230303030304).abs() < 1e-6,
+        "expected the deterministic best-effort total (~47.44 coins/sec); got {}",
         plan.rate_per_second
     );
 }
