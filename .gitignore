@@ -21,9 +21,3 @@ target
 #.idea/
 # WASM build output
 web/pkg/
-
-# Local editor/dev-tooling config
-.claude/
-
-# Internal working notes, kept outside the repo
-BETA_NOTES.md
