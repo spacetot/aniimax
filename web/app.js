@@ -746,8 +746,10 @@ function renderAniimoSummary(plan) {
             g.where.set(place, (g.where.get(place) || 0) + step.facility_count);
         });
     });
+    const collapsedSummary = document.getElementById('aniimo-collapsed-summary');
     if (groups.size === 0) {
         container.innerHTML = '<p class="hint">Nothing in this plan needs an Aniimo.</p>';
+        collapsedSummary.textContent = 'No Aniimo needed.';
         return;
     }
     // An Aniimo can do any job of its ability at or below its level, so work that fits in a
@@ -787,6 +789,9 @@ function renderAniimoSummary(plan) {
     } else {
         capNote = `<p class="hint small">That's ${total} Aniimo at most; ones with more than one of these abilities can cover several rows.</p>`;
     }
+    collapsedSummary.textContent = cap
+        ? `${total} Aniimo · your homeland holds ${cap}${total > cap ? ' (too many; see the list)' : ''}`
+        : `${total} Aniimo at most`;
     container.innerHTML = `
         <div class="table-wrapper">
             <table class="facility-plan-table">
@@ -1410,6 +1415,12 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('clear-saved-btn').addEventListener('click', clearSavedInputs);
     document.getElementById('rate-unit').addEventListener('change', updateRateUnitDisplays);
     document.getElementById('aniimo-best').addEventListener('change', () => showSelectedPlan(false));
+    document.getElementById('aniimo-toggle').addEventListener('click', () => {
+        const toggle = document.getElementById('aniimo-toggle');
+        const expanded = toggle.getAttribute('aria-expanded') !== 'true';
+        toggle.setAttribute('aria-expanded', String(expanded));
+        document.getElementById('aniimo-body').hidden = !expanded;
+    });
     document.getElementById('aniimo-minimum').addEventListener('change', () => showSelectedPlan(false));
 
     // Goal fields update live; no need to re-run the facility-allocation solve just because the

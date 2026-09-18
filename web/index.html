@@ -116,6 +116,29 @@
                 <div id="error-message" class="card error-message" style="display: none;"></div>
 
                 <div id="results-content">
+                    <div class="card aniimo-card" id="aniimo-card">
+                        <div class="card-head">
+                            <button type="button" class="collapse-toggle" id="aniimo-toggle" aria-expanded="false" aria-controls="aniimo-body">
+                                <span class="chevron" aria-hidden="true"></span>
+                                <h2>Aniimo team</h2>
+                            </button>
+                            <div class="tabs compact" role="radiogroup" aria-label="Aniimo setup">
+                                <label title="Level-3 Aniimo with each facility's personality: the fastest plan"><input type="radio" name="aniimo-setup" id="aniimo-best" value="best" checked> Best</label>
+                                <label title="The lowest ability level each recipe accepts: the least you can get by with"><input type="radio" name="aniimo-setup" id="aniimo-minimum" value="minimum"> Minimum</label>
+                            </div>
+                        </div>
+                        <p class="collapsed-summary" id="aniimo-collapsed-summary"></p>
+                        <p class="hint small" id="aniimo-pending" style="display: none;">Still working out the Minimum setup...</p>
+                        <div id="aniimo-body" hidden>
+                            <details class="explain">
+                                <summary>How the team is worked out</summary>
+                                <p><strong>Best</strong> puts a level-3 Aniimo with the facility's personality on every job, the fastest possible. <strong>Minimum</strong> uses the lowest ability level each recipe accepts, with no personality bonus: slower, but it's what you need at the very least. The plan below follows whichever is picked.</p>
+                                <p>Aniimo move between any jobs they can do, so the counts cover the work on average rather than one per facility; Farmland and Woodland jobs are included. Facilities with a resident Aniimo (Sandcastle, Dewy House and the like) need one each. Each recipe's minimum ability level and the Farmland/Woodland jobs haven't been checked in game yet.</p>
+                            </details>
+                            <div id="aniimo-summary"></div>
+                        </div>
+                    </div>
+
                     <div class="card rate-card">
                         <span class="summary-label">Your rate</span>
                         <div class="rate-line">
@@ -141,23 +164,6 @@
                              then one table per facility category (Materials / Environment /
                              Materials Processing) for everything else. -->
                         <div id="facility-plan-container" class="facilities-container"></div>
-                    </div>
-
-                    <div class="card production-steps">
-                        <div class="card-head">
-                            <h2>Aniimo team</h2>
-                            <div class="tabs compact" role="radiogroup" aria-label="Aniimo setup">
-                                <label><input type="radio" name="aniimo-setup" id="aniimo-best" value="best" checked> Best</label>
-                                <label><input type="radio" name="aniimo-setup" id="aniimo-minimum" value="minimum"> Minimum</label>
-                            </div>
-                        </div>
-                        <details class="explain">
-                            <summary>How the team is worked out</summary>
-                            <p><strong>Best</strong> puts a level-3 Aniimo with the facility's personality on every job, the fastest possible. <strong>Minimum</strong> uses the lowest ability level each recipe accepts, with no personality bonus: slower, but it's what you need at the very least.</p>
-                            <p>Aniimo move between any jobs they can do, so the counts cover the work on average rather than one per facility; Farmland and Woodland jobs are included. Facilities with a resident Aniimo (Sandcastle, Dewy House and the like) need one each. Each recipe's minimum ability level and the Farmland/Woodland jobs haven't been checked in game yet.</p>
-                        </details>
-                        <p class="hint small" id="aniimo-pending" style="display: none;">Still working out the Minimum setup...</p>
-                        <div id="aniimo-summary"></div>
                     </div>
 
                     <div class="card production-steps" id="goal-section">

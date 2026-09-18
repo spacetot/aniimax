@@ -1487,3 +1487,54 @@ details.explain p {
         grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
     }
 }
+
+/* Aniimo team card: collapsed to a one-line summary until opened. */
+.collapse-toggle {
+    display: flex;
+    align-items: center;
+    gap: 0.55rem;
+    padding: 0;
+    background: none;
+    border: none;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+}
+
+.collapse-toggle:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 3px;
+    border-radius: 4px;
+}
+
+.collapse-toggle .chevron {
+    width: 0.5rem;
+    height: 0.5rem;
+    border-right: 2px solid var(--text-muted);
+    border-bottom: 2px solid var(--text-muted);
+    transform: rotate(-45deg);
+    transition: transform 0.15s;
+}
+
+.collapse-toggle[aria-expanded="true"] .chevron {
+    transform: rotate(45deg);
+}
+
+.collapse-toggle:hover h2 {
+    text-decoration: underline;
+    text-underline-offset: 3px;
+}
+
+.aniimo-card .card-head {
+    margin-bottom: 0.35rem;
+}
+
+.collapsed-summary {
+    margin: 0 0 0 1.05rem;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+}
+
+#aniimo-body {
+    margin-top: 1rem;
+}
