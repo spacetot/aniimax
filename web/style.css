@@ -73,6 +73,7 @@ header h1 {
     color: inherit;
     font-family: inherit;
     font-size: 0.9rem;
+    line-height: normal;
     text-decoration: underline;
 }
 

@@ -4,7 +4,7 @@ A command-line tool, Rust library, and **web application** for optimizing produc
 
 Updated for the full release, with a joint LP-based facility-allocation engine for the web app (the CLI uses a simpler greedy approach; see [How the Optimization Works](#how-the-optimization-works) for the difference). Game data is being re-verified against the release facility by facility; facilities whose data hasn't been confirmed yet are left out until it is, so the calculator never recommends numbers from an older version of the game.
 
-> **Note:** This project is a work in progress. Not all in-game items are included yet, and production times are assumed to match the values displayed in-game.
+> **Note:** Game data for the full release is still being filled in, so some facilities and items are missing. Know something we don't, or spot a wrong number? Add it to the [shared data sheet](https://docs.google.com/spreadsheets/d/1I3NsJQVqTzglthvmlokSbFlv9eKnpWlzHzBls1FruOo/edit). No account needed.
 
 ## Try It Online
 
@@ -634,7 +634,7 @@ Contributions are welcome! Here's how you can help:
 
 ### Adding Game Data
 
-The easiest way to help is to [submit game data](https://github.com/ae-bii/aniimax/issues/new?template=facility-data.yml) through the issue form: new facilities, missing items, or corrections. Fill in what the game shows (screenshots are welcome but optional); no need to know git or the CSV format.
+The easiest way to help is the [shared data sheet](https://docs.google.com/spreadsheets/d/1I3NsJQVqTzglthvmlokSbFlv9eKnpWlzHzBls1FruOo/edit): one tab per facility with everything the calculator currently knows. Fix a wrong number, add a missing item, or add a whole new facility on the "Other facilities" tab. No account, git or CSV knowledge needed; every change is reviewed before it goes into the calculator.
 
 If you'd rather edit the data yourself:
 
