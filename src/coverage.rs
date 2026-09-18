@@ -6,20 +6,20 @@
 //! - It radiates coverage as a square of side `2 * `[`COVERAGE_RADIUS`] centered on its own exact
 //!   center (not its corner).
 //! - A facility is covered only if its own footprint overlaps that coverage square by a real
-//!   area; a corner-only touch is not enough. Since every footprint is snapped to the
-//!   quarter-grid ([`GRID_STEP`]), any nonzero overlap between two quarter-grid-aligned rectangles
-//!   is automatically at least 0.25x0.25, so this rule falls out for free from only ever
-//!   generating candidate positions on that grid; no separate minimum-area check is needed.
+//!   area; a corner-only touch is not enough. Since every footprint snaps to half tiles
+//!   ([`GRID_STEP`]), any nonzero overlap between two half-tile-aligned rectangles is
+//!   automatically at least 0.5x0.5, so this rule falls out for free from only ever generating
+//!   candidate positions on that grid; no separate minimum-area check is needed.
 //! - Facilities can't overlap the building itself or each other.
 //! - Facility footprints: Farmland/Dewy House 2x2, Woodland 4x4, Starfall Hammock/Tidewhisper
 //!   Sandcastle/Floral Windmill 5x5; see [`ENVIRONMENT_GATED_FACILITIES`].
 //!
 //! ## Candidate generation is a bounded heuristic, not exhaustive
 //!
-//! Sweeping every quarter-grid position for every facility type would generate thousands of
+//! Sweeping every half-tile position for every facility type would generate thousands of
 //! candidates per type; intractable for the MILP branch & bound this feeds into (see
 //! `crate::optimizer::solve_facility_allocation`). Instead, [`candidate_positions`] finds the
-//! single best quarter-grid alignment for each facility type on its own, plus a handful of
+//! single best half-tile alignment for each facility type on its own, plus a handful of
 //! half-space variants (restricting that same search to one half of the region, split through the
 //! building's center) so the ILP has enough raw material to reconstruct mixed layouts when two or
 //! more types share one building's coverage. Candidate **generation** is this bounded, tuned
@@ -35,8 +35,9 @@ pub const BUILDING_SIZE: f64 = 2.0;
 /// Coverage radiates this far from the building's exact center in every direction, i.e. total
 /// coverage span is `2 * COVERAGE_RADIUS` (a 9x9 square).
 pub const COVERAGE_RADIUS: f64 = 4.5;
-/// Facilities snap to this fine grid; also the smallest possible nonzero coverage overlap.
-pub const GRID_STEP: f64 = 0.25;
+/// Facilities and buildings snap to half tiles in game; also the smallest possible nonzero
+/// coverage overlap.
+pub const GRID_STEP: f64 = 0.5;
 
 /// Every facility type whose environment-gated items are capacity-bound by owned environment
 /// buildings, with its fixed square footprint side length.
@@ -122,14 +123,18 @@ impl HalfSpace {
     }
 }
 
-/// Finds the single best quarter-grid alignment (offset) for tiling `size`-square facilities
+/// Finds the single best half-tile alignment (offset) for tiling `size`-square facilities
 /// around the fixed building/coverage geometry, optionally restricted to one `half`, and returns
 /// every valid position from that best alignment (valid = doesn't overlap the building, overlaps
-/// the coverage square by positive area).
-fn best_grid_positions(size: f64, half: Option<HalfSpace>) -> Vec<(f64, f64)> {
+/// the coverage square by positive area). Also returns, second, the alignment fitting the same
+/// number whose positions sit most evenly around the building (the same as the first if that one
+/// already does), for tidying layouts (see `compact_layout`); the first can pack better alongside
+/// other facility types, so it's the one offered to the packing.
+fn best_grid_positions(size: f64, half: Option<HalfSpace>) -> (Vec<(f64, f64)>, Vec<(f64, f64)>) {
     let building = building_rect();
     let coverage = coverage_rect();
     let mut best: Vec<(f64, f64)> = Vec::new();
+    let mut centered: Vec<(f64, f64)> = Vec::new();
 
     let steps = (size / GRID_STEP).round() as i64;
     for oi in 0..steps {
@@ -167,11 +172,31 @@ fn best_grid_positions(size: f64, half: Option<HalfSpace>) -> Vec<(f64, f64)> {
             }
 
             if positions.len() > best.len() {
-                best = positions;
+                best = positions.clone();
+                centered = positions;
+            } else if positions.len() == best.len() && off_center(&positions, size) < off_center(&centered, size) - EPS {
+                centered = positions;
             }
         }
     }
-    best
+    (best, centered)
+}
+
+/// How far the middle of `positions`' bounding box (for `size`-square footprints) is from the
+/// building's center, summed over both axes; 0 for a set laid out evenly around the building.
+fn off_center(positions: &[(f64, f64)], size: f64) -> f64 {
+    if positions.is_empty() {
+        return f64::INFINITY;
+    }
+    let center = BUILDING_SIZE / 2.0;
+    let (mut min_x, mut max_x, mut min_y, mut max_y) = (f64::INFINITY, f64::NEG_INFINITY, f64::INFINITY, f64::NEG_INFINITY);
+    for &(x, y) in positions {
+        min_x = min_x.min(x);
+        max_x = max_x.max(x + size);
+        min_y = min_y.min(y);
+        max_y = max_y.max(y + size);
+    }
+    ((min_x + max_x) / 2.0 - center).abs() + ((min_y + max_y) / 2.0 - center).abs()
 }
 
 /// Every candidate position worth offering the packing solver for one facility type: its own
@@ -179,18 +204,21 @@ fn best_grid_positions(size: f64, half: Option<HalfSpace>) -> Vec<(f64, f64)> {
 /// reconstruct "Hybrid"-style splits when sharing coverage with another type); deduplicated.
 pub fn candidate_positions(size: f64) -> Vec<(f64, f64)> {
     let split = BUILDING_SIZE / 2.0; // the building's own center coordinate on each axis
-    let mut all: Vec<(f64, f64)> = best_grid_positions(size, None);
+    let mut all: Vec<(f64, f64)> = best_grid_positions(size, None).0;
+    let mut add = |positions: Vec<(f64, f64)>| {
+        for pos in positions {
+            if !all.contains(&pos) {
+                all.push(pos);
+            }
+        }
+    };
     for half in [
         HalfSpace::Left(split),
         HalfSpace::Right(split),
         HalfSpace::Bottom(split),
         HalfSpace::Top(split),
     ] {
-        for pos in best_grid_positions(size, Some(half)) {
-            if !all.contains(&pos) {
-                all.push(pos);
-            }
-        }
+        add(best_grid_positions(size, Some(half)).0);
     }
     all
 }
@@ -220,7 +248,7 @@ pub struct PackingSolution {
 }
 
 /// Adds the non-overlap constraints for a set of placement variables, bounding how many can cover
-/// any single quarter-grid cell at once by `capacity`. This is a cell-based set-packing
+/// any single half-tile cell at once by `capacity`. This is a cell-based set-packing
 /// formulation (standard for "no two selected rectangles overlap"), not naive pairwise
 /// `var_i + var_j <= capacity` constraints; pairwise gives an extremely loose LP relaxation for
 /// this kind of problem, whereas bounding how many placements can cover each individual cell is
@@ -548,7 +576,53 @@ fn most_with_minimums(types: &[&str], minimums: &[u32], target: usize) -> Option
     if counts.iter().zip(minimums).enumerate().any(|(t, (c, m))| t != target && c < m) {
         return None;
     }
-    Some(CoverageOption { counts, layout: chosen.into_iter().map(|i| vars[i].0.clone()).collect() })
+    let layout = compact_layout(chosen.into_iter().map(|i| vars[i].0.clone()).collect(), types);
+    Some(CoverageOption { counts, layout })
+}
+
+/// Distance from a placement's center to the building's center.
+fn distance_to_building(p: &Placement) -> f64 {
+    let center = BUILDING_SIZE / 2.0;
+    (p.x + p.size / 2.0 - center).hypot(p.y + p.size / 2.0 - center)
+}
+
+/// Pulls a layout in around the building without changing how many of each type it holds: moves
+/// the farthest placement to the closest free candidate spot of its type that's nearer, and
+/// repeats until nothing moves. Many layouts fit the same counts; this picks a compact, centered
+/// one to show.
+fn compact_layout(mut layout: Vec<Placement>, types: &[&str]) -> Vec<Placement> {
+    // The packing candidates plus each type's most centered grid, which the packing itself
+    // doesn't need (it never fits more) but gives plots somewhere tidier to move to.
+    let mut candidates: Vec<Placement> = Vec::new();
+    for &facility in types {
+        if let Some(size) = facility_footprint(facility) {
+            candidates.extend(candidate_placements(facility, size));
+            for (x, y) in best_grid_positions(size, None).1 {
+                candidates.push(Placement { facility: facility.to_string(), x, y, size });
+            }
+        }
+    }
+    candidates.sort_by(|a, b| distance_to_building(a).partial_cmp(&distance_to_building(b)).unwrap_or(std::cmp::Ordering::Equal));
+    loop {
+        layout.sort_by(|a, b| distance_to_building(b).partial_cmp(&distance_to_building(a)).unwrap_or(std::cmp::Ordering::Equal));
+        let mut moved = false;
+        for i in 0..layout.len() {
+            let current = distance_to_building(&layout[i]);
+            let spot = candidates.iter().find(|c| {
+                c.facility == layout[i].facility
+                    && distance_to_building(c) < current - EPS
+                    && layout.iter().enumerate().all(|(j, other)| j == i || !placements_overlap(c, other))
+            });
+            if let Some(spot) = spot {
+                layout[i] = spot.clone();
+                moved = true;
+                break;
+            }
+        }
+        if !moved {
+            return layout;
+        }
+    }
 }
 
 /// Tries every minimum count of `types[position]` from 0 up until it no longer fits, recursing into
@@ -653,9 +727,10 @@ mod tests {
 
     #[test]
     fn multi_type_sharing_gives_a_sensible_non_zero_split() {
-        // Farmland + Starfall Hammock, both weighted so neither trivially dominates, one
-        // building: confirm both types can actually get placed (not one starving the other).
-        let solution = solve_packing(&[("Farmland", 1.0), ("Starfall Hammock", 1.0)], 1)
+        // Farmland + Starfall Hammock, one building, the Hammock worth twice a Farmland plot: a
+        // mix (31 Farmland + 1 Hammock = 33) beats Farmland alone (32), so both must get placed.
+        // (At equal weights the two tie, and either answer is right.)
+        let solution = solve_packing(&[("Farmland", 1.0), ("Starfall Hammock", 2.0)], 1)
             .expect("packing should be feasible");
         let farmland = solution.covered.iter().find(|(n, _)| n == "Farmland").map(|(_, c)| *c).unwrap_or(0);
         let hammock = solution.covered.iter().find(|(n, _)| n == "Starfall Hammock").map(|(_, c)| *c).unwrap_or(0);
