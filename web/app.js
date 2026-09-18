@@ -96,10 +96,10 @@ let lastPlan = null;
 // unit can re-render the Product Breakdown table's Profit column without recomputing the goal.
 let lastGoalResult = null;
 
-// Display name and per-second unit label for each optimizable currency.
+// Display name for each optimizable currency. Coins are the only one since the full release
+// removed Bud Tickets; kept as a map so a plan's `currency` still resolves to its label.
 const CURRENCY_LABELS = {
     coins: 'Coins',
-    bud_tickets: 'Bud Tickets',
 };
 
 // Multiplier from the solver's native per-second rate to each display unit, and the short suffix
@@ -118,6 +118,15 @@ const RATE_UNIT_SECONDS = {
 // level 3 and 4 more upgraded to level 5), so a facility can own more than one tier; facilities
 // that don't level up at all (`hasLevels: false`) only ever have exactly one.
 let facilityTiers = {};
+
+// Aniimo working each `hasWorker` facility: `{ 'Carousel Mill': {suitability: 3, personality_bonus: false}, ... }`.
+// Its work suitability level (1-3) and personality bonus set how fast the facility completes
+// workload; see `Worker` in models.rs. Sent to the solver as-is.
+let facilityWorkers = {};
+
+function defaultWorker() {
+    return { suitability: 1, personality_bonus: false };
+}
 
 function defaultFacilityTiers() {
     const tiers = {};
@@ -166,6 +175,7 @@ function renderFacilityCards() {
                 <h4>${f.name} <span class="info-icon" data-tooltip="${f.tooltip}">?</span></h4>
                 <div class="facility-tiers" data-facility="${f.name}"></div>
                 ${f.hasLevels === false ? '' : '<button type="button" class="add-tier-btn" data-facility="' + f.name + '">+ Add level</button>'}
+                ${f.hasWorker ? workerRowHtml(f) : ''}
             </div>
         `).join('');
         return `
@@ -178,6 +188,26 @@ function renderFacilityCards() {
     FACILITIES.forEach(f => renderTierRows(f.name));
 }
 
+// The Aniimo inputs under a `hasWorker` facility's tiers: its work suitability level and whether it
+// has the facility's personality bonus.
+function workerRowHtml(f) {
+    const w = facilityWorkers[f.name];
+    return `
+        <div class="facility-inputs worker-row" data-facility="${f.name}">
+            <div class="input-field">
+                <label>${f.ability} level <span class="info-icon" data-tooltip="${f.ability} ability level (1-3) of the Aniimo working this facility. Higher levels work much faster: a 108-workload recipe takes 108s at level 1, 36s at level 2 and 27s at level 3. The personality bonus makes it 20% faster.">?</span></label>
+                <input type="number" class="worker-suitability" value="${w.suitability}" min="1" max="3">
+            </div>
+            <div class="input-field checkbox-field">
+                <label title="The Aniimo working this facility has the ${f.personality || 'matching'} personality: +20% speed">
+                    <input type="checkbox" class="worker-bonus" ${w.personality_bonus ? 'checked' : ''}>
+                    ${f.personality || 'Personality'} bonus
+                </label>
+            </div>
+        </div>
+    `;
+}
+
 // Delegated handlers for the facility grid, covering tier rows added/removed after initial
 // render: editing a Count/Level input updates `facilityTiers` and persists it; "+ Add level"
 // appends a new tier (guessing the next level up from the highest owned, capped at 10); "×"
@@ -186,6 +216,17 @@ function attachFacilityTierHandlers() {
     const grid = document.getElementById('facilities-grid');
 
     grid.addEventListener('input', (e) => {
+        const workerRow = e.target.closest('.worker-row');
+        if (workerRow) {
+            const worker = facilityWorkers[workerRow.dataset.facility];
+            if (e.target.classList.contains('worker-suitability')) {
+                worker.suitability = Math.min(3, Math.max(1, numberOrDefault(e.target.value, 1)));
+            } else if (e.target.classList.contains('worker-bonus')) {
+                worker.personality_bonus = e.target.checked;
+            }
+            saveInputsToStorage();
+            return;
+        }
         const row = e.target.closest('.tier-row');
         if (!row) return;
         const container = e.target.closest('.facility-tiers');
@@ -198,6 +239,13 @@ function attachFacilityTierHandlers() {
             tier.level = numberOrDefault(e.target.value, 1);
         }
         saveInputsToStorage();
+    });
+
+    // Show the clamped value once the player leaves the field (typing 5 saves as 3).
+    grid.addEventListener('change', (e) => {
+        if (e.target.classList.contains('worker-suitability')) {
+            e.target.value = facilityWorkers[e.target.closest('.worker-row').dataset.facility].suitability;
+        }
     });
 
     grid.addEventListener('click', (e) => {
@@ -241,16 +289,13 @@ const STORAGE_KEY = 'aniimax-config-v1';
 
 // Every plain input ID whose value should be persisted (facility tiers are saved separately;
 // see `facilityTiers`/`initFacilityTiers`, since they're a dynamic list rather than one fixed
-// element per facility). Both currency radios are listed (only the checked one actually
-// restores anything, per the type === 'radio' branch below) since they share a name but not an
-// id.
+// element per facility).
 function getPersistedFieldIds() {
     return [
-        'currency-coins', 'currency-bud-tickets',
         'target-amount', 'current-amount',
         'prioritize-byproducts',
         'ecological-module-level', 'kitchen-module-level',
-        'mineral-detector-level', 'crafting-module-level',
+        'resource-detector-level', 'crafting-module-level',
         'rate-unit'
     ];
 }
@@ -259,11 +304,26 @@ function getPersistedFieldIds() {
 function readStorage() {
     try {
         const raw = localStorage.getItem(STORAGE_KEY);
-        return raw ? JSON.parse(raw) : null;
+        return raw ? migrateSavedConfig(JSON.parse(raw)) : null;
     } catch (e) {
         console.warn('Could not load saved inputs from localStorage:', e);
         return null;
     }
+}
+
+// Carries a save made under an older name forward to its current one, so a returning user keeps
+// their inputs across a rename instead of silently falling back to defaults. The full release
+// renamed Mineral Pile to Mine and the Mineral Detector module to Resource Detector.
+function migrateSavedConfig(data) {
+    if (!data || typeof data !== 'object') return data;
+    const tiers = data.facilityTiers;
+    if (tiers && tiers['Mine'] === undefined && tiers['Mineral Pile'] !== undefined) {
+        tiers['Mine'] = tiers['Mineral Pile'];
+    }
+    if (data['resource-detector-level'] === undefined && data['mineral-detector-level'] !== undefined) {
+        data['resource-detector-level'] = data['mineral-detector-level'];
+    }
+    return data;
 }
 
 // Populates the module-level `facilityTiers` from a saved config blob (see `readStorage`),
@@ -282,10 +342,22 @@ function initFacilityTiers(data) {
             }))
             : defaults[f.name];
     });
+
+    const savedWorkers = (data && data.facilityWorkers) || {};
+    facilityWorkers = {};
+    FACILITIES.filter(f => f.hasWorker).forEach(f => {
+        const w = savedWorkers[f.name];
+        facilityWorkers[f.name] = w
+            ? {
+                suitability: Math.min(3, Math.max(1, numberOrDefault(w.suitability, 1))),
+                personality_bonus: !!w.personality_bonus
+            }
+            : defaultWorker();
+    });
 }
 
 function saveInputsToStorage() {
-    const data = { facilityTiers };
+    const data = { facilityTiers, facilityWorkers };
     getPersistedFieldIds().forEach(id => {
         const el = document.getElementById(id);
         if (!el) return;
@@ -348,13 +420,9 @@ async function initWasm() {
     }
 }
 
-function getCurrency() {
-    const checked = document.querySelector('input[name="currency"]:checked');
-    return checked ? checked.value : 'coins';
-}
-
-// Get plan-level input values from the form (facilities/currency/modules/prioritize-byproducts,
-// nothing goal-related, since find_plan doesn't need a target).
+// Get plan-level input values from the form (facilities/modules/prioritize-byproducts, nothing
+// goal-related, since find_plan doesn't need a target). Currency is always coins: the full
+// release removed Bud Tickets, the only other sellable currency.
 function getPlanInputValues() {
     // `facilityTiers` is the live source of truth for owned counts (kept in sync with the DOM by
     // `attachFacilityTierHandlers`), sent straight through as a list of tiers per facility; see
@@ -370,15 +438,16 @@ function getPlanInputValues() {
     const modules = {
         ecological_module: numberOrDefault(document.getElementById('ecological-module-level').value, 0),
         kitchen_module: numberOrDefault(document.getElementById('kitchen-module-level').value, 0),
-        mineral_detector: numberOrDefault(document.getElementById('mineral-detector-level').value, 0),
+        resource_detector: numberOrDefault(document.getElementById('resource-detector-level').value, 0),
         crafting_module: numberOrDefault(document.getElementById('crafting-module-level').value, 0)
     };
 
     return {
-        currency: getCurrency(),
+        currency: 'coins',
         prioritize_byproducts: document.getElementById('prioritize-byproducts').checked,
         facilities,
-        modules
+        modules,
+        workers: facilityWorkers
     };
 }
 
@@ -891,16 +960,12 @@ async function runTimeToGoal() {
 const RECIPE_MODULE_LABELS = {
     ecological_module: 'Ecological Module',
     kitchen_module: 'Kitchen Module',
-    mineral_detector: 'Mineral Detector',
+    resource_detector: 'Resource Detector',
     crafting_module: 'Crafting Module',
 };
 
 // Cached after the first render, since the underlying data never changes for a given wasm build.
 let recipesRendered = false;
-
-function formatRecipeCurrency(currency) {
-    return currency === 'bud_tickets' ? 'Bud Tickets' : 'Coins';
-}
 
 // Mirrors the Rust `format_time` helper in wasm.rs (hours/minutes/seconds, dropping leading
 // zero units) so times read the same way here as they would in-game.
@@ -969,8 +1034,8 @@ function renderRecipeTables(recipes) {
                     <td>${r.facility_level}</td>
                     <td>${formatRecipeInputs(r)}</td>
                     <td>${formatRecipeYield(r)}</td>
-                    <td>${formatRecipeTime(r.production_time)}</td>
-                    <td>${r.sell_value} ${formatRecipeCurrency(r.sell_currency)}</td>
+                    <td>${r.workload ? `${r.workload} workload` : formatRecipeTime(r.production_time)}</td>
+                    <td>${r.sell_value} Coins</td>
                     <td>${formatRecipeModule(r)}</td>
                 </tr>
             `).join('');
@@ -986,7 +1051,7 @@ function renderRecipeTables(recipes) {
                                     <th>Level</th>
                                     <th>Inputs</th>
                                     <th>Yield</th>
-                                    <th>Time</th>
+                                    <th>Time <span class="info-icon" data-tooltip="Grow time for crops and trees. Everything else lists workload: how long it takes depends on the Aniimo working it (108 workload takes 108s at level 1, 36s at level 2, 27s at level 3).">?</span></th>
                                     <th>Sell</th>
                                     <th>Module</th>
                                 </tr>
@@ -1054,15 +1119,6 @@ document.addEventListener('DOMContentLoaded', () => {
     // goal amount changed.
     document.getElementById('target-amount').addEventListener('input', runTimeToGoal);
     document.getElementById('current-amount').addEventListener('input', runTimeToGoal);
-
-    // Changing currency invalidates the last plan (it was solved for the other currency); hide
-    // the goal section until Calculate is pressed again rather than show a stale rate/plan.
-    document.querySelectorAll('input[name="currency"]').forEach(radio => {
-        radio.addEventListener('change', () => {
-            lastPlan = null;
-            document.getElementById('goal-section').style.display = 'none';
-        });
-    });
 
     // Allow Enter key to trigger a full plan recalculation; but not in the goal fields, which
     // already update live on every keystroke via the listeners above. Facility tier inputs are

@@ -26,28 +26,18 @@
             <section class="config-section">
                 <h2>Configuration</h2>
 
-                <p class="hint">Set your facilities and pick a currency, and the calculator shows the fastest achievable rate and what each facility should do. No target is needed for that. Enter a goal further down once you have a plan, and it updates instantly.</p>
+                <p class="hint">Set your facilities, and the calculator shows the fastest achievable rate and what each facility should do. No target is needed for that. Enter a goal further down once you have a plan, and it updates instantly.</p>
 
                 <p class="hint small">Your inputs are saved automatically in this browser. They'll still be here next time you open this page. <button type="button" id="clear-saved-btn" class="toggle-button">Clear saved values</button></p>
 
                 <div class="config-group">
-                    <div class="input-row">
-                        <div class="input-field">
-                            <label>Currency</label>
-                            <div class="radio-group">
-                                <label><input type="radio" name="currency" id="currency-coins" value="coins" checked> Coins</label>
-                                <label><input type="radio" name="currency" id="currency-bud-tickets" value="bud_tickets"> Bud Tickets</label>
-                            </div>
-                        </div>
-                    </div>
-
                     <div class="input-row">
                         <div class="input-field checkbox-field">
                             <label>
                                 <input type="checkbox" id="prioritize-byproducts" checked>
                                 Prioritize Wood Blocks/Mineral Sand
                             </label>
-                            <p class="hint small">Guarantee the maximum possible Wood Blocks/Mineral Sand rate first, even at the cost of coin/Bud Ticket profit. Uncheck to optimize purely for profit.</p>
+                            <p class="hint small">Guarantee the maximum possible Wood Blocks/Mineral Sand rate first, even at the cost of coin profit. Uncheck to optimize purely for profit.</p>
                         </div>
                     </div>
 
@@ -57,7 +47,7 @@
                 <p class="hint">Set the count and level for each facility you have.</p>
 
                 <!-- Facility cards are generated dynamically by app.js from the FACILITIES config,
-                     grouped into category sections (Materials / Aniimo Materials / Materials
+                     grouped into category sections (Materials / Environment / Materials
                      Processing), so new facilities can be added without editing this file. -->
                 <div class="facilities-container" id="facilities-grid"></div>
 
@@ -66,7 +56,7 @@
                 
                 <div class="modules-grid">
                     <div class="module-card">
-                        <h4>Ecological Module <span class="info-icon" data-tooltip="Lv.1: high-speed wheat (+5 yield)&#10;Lv.2: high-speed willow (+2 yield)&#10;Lv.3: high-speed bamboo (+4 yield)&#10;Lv.4: high-speed rubber (+3 yield)&#10;Lv.5: high-speed pine (+1 yield)">?</span></h4>
+                        <h4>Ecological Module <span class="info-icon" data-tooltip="Lv.1: quick wheat&#10;Lv.2: quick bamboo&#10;Lv.3: quick potato&#10;Lv.4: quick lemon&#10;Lv.5: quick rice&#10;Lv.6: quick maple syrup&#10;Lv.7: quick strawberry&#10;Lv.8: quick coconut">?</span></h4>
                         <div class="input-field">
                             <label for="ecological-module-level">Level</label>
                             <input type="number" id="ecological-module-level" value="0" min="0" max="10">
@@ -74,7 +64,7 @@
                     </div>
 
                     <div class="module-card">
-                        <h4>Kitchen Module <span class="info-icon" data-tooltip="Lv.2: super wheatmeal (210 vs 150 sell)&#10;Lv.3: premium dried strawberry (546 vs 437 sell)&#10;Lv.4: high grade herbs (4463 vs 3570 sell)">?</span></h4>
+                        <h4>Kitchen Module <span class="info-icon" data-tooltip="Lv.2: premium bread&#10;Lv.3: premium potato soup&#10;Lv.4: premium sweet rice wine&#10;Lv.5: premium salted lemon&#10;Lv.6: premium jello&#10;Lv.7: premium berry chocolate coconut pudding">?</span></h4>
                         <div class="input-field">
                             <label for="kitchen-module-level">Level</label>
                             <input type="number" id="kitchen-module-level" value="0" min="0" max="10">
@@ -82,15 +72,15 @@
                     </div>
 
                     <div class="module-card">
-                        <h4>Mineral Detector <span class="info-icon" data-tooltip="Lv.1: high-speed rock (+2 yield)&#10;Lv.2: high-speed copper (+2 yield, faster)&#10;Lv.3: high-speed iron (+2 yield, faster)&#10;Lv.4: high-speed quartz (+1 yield, faster)&#10;Lv.5: high-speed gem (+1 yield, faster)">?</span></h4>
+                        <h4>Resource Detector <span class="info-icon" data-tooltip="Lv.1: quick well water&#10;Lv.2: quick sea salt&#10;Lv.3: quick aromathyst&#10;Lv.4: quick fresh water&#10;Lv.5: quick wool&#10;Lv.6: quick deep rock spring water&#10;Lv.7: quick natural mineral spring water&#10;Lv.8: quick scales">?</span></h4>
                         <div class="input-field">
-                            <label for="mineral-detector-level">Level</label>
-                            <input type="number" id="mineral-detector-level" value="0" min="0" max="10">
+                            <label for="resource-detector-level">Level</label>
+                            <input type="number" id="resource-detector-level" value="0" min="0" max="10">
                         </div>
                     </div>
 
                     <div class="module-card">
-                        <h4>Crafting Module <span class="info-icon" data-tooltip="Lv.1: advanced wood sculpture (431 vs 345 sell)">?</span></h4>
+                        <h4>Crafting Module <span class="info-icon" data-tooltip="Lv.1: premium river-washed stones&#10;Lv.2: premium rose freshener&#10;Lv.3: advanced lemon incense&#10;Lv.4: advanced wind chime&#10;Lv.5: premium soap&#10;Lv.6: advanced gemstone dust&#10;Lv.7: premium mixed perfume">?</span></h4>
                         <div class="input-field">
                             <label for="crafting-module-level">Level</label>
                             <input type="number" id="crafting-module-level" value="0" min="0" max="10">
@@ -134,7 +124,7 @@
                         <p class="hint small">Each row is a single product; a facility split between multiple items gets one row per item. Crops that need a growing environment (Cool/Warm/Freeze/Scorching/Adequate) are grouped by which environment they use, showing which Heat Furnace/Cooling Unit/Sunlamp configuration covers them. Everything else is grouped the same way as the Facilities section above.</p>
                         <!-- Populated by app.js's renderFacilityPlan(): one section per
                              environment mode in use (Cool/Warm/Freeze/Scorching/Adequate) first,
-                             then one table per facility category (Materials / Aniimo Materials /
+                             then one table per facility category (Materials / Environment /
                              Materials Processing) for everything else. -->
                         <div id="facility-plan-container" class="facilities-container"></div>
                     </div>
@@ -239,7 +229,7 @@
                 <h3>1. Profit per Item</h3>
                 <p>For every item, we compute net profit per batch and the time to make one, tracing its full ingredient chain back to whatever facilities produce the raw materials.</p>
                 <div class="math-block">\[ \text{profit}_{\text{batch}} = (\text{yield} \times \text{sell_price}) - \text{raw_cost} \]</div>
-                <p>Dividing by batch time gives a per-second rate, but that rate alone doesn't say how much of each facility one batch actually needs. For that we track <strong>utilization</strong>: batches per second at this item's own facility, plus the same for every facility touched anywhere upstream in its ingredient tree (e.g. soy_sauce_tofu pulls from both Bouncy Brew Keg and Carousel Mill, which both draw soybean from Farmland).</p>
+                <p>Dividing by batch time gives a per-second rate, but that rate alone doesn't say how much of each facility one batch actually needs. For that we track <strong>utilization</strong>: batches per second at this item's own facility, plus the same for every facility touched anywhere upstream in its ingredient tree (e.g. dried_bean_curd pulls from Jukebox Dryer, plus Carousel Mill for its tofu, which in turn draws soybean from Farmland).</p>
 
                 <h3>2. Environment Coverage</h3>
                 <p>Some crops need a growing environment (Cool/Warm/Freeze/Scorching/Adequate), supplied by Heat Furnace/Cooling Unit/Sunlamp buildings. Each building covers a fixed 2D area around it, so how many plots of each facility type it can cover is an exact geometric packing problem, solved once up front per owned building using each candidate item's standalone profit-per-plot to prioritize which types get coverage. This produces a hard cap on how much of each covered facility type is usable, feeding into the allocation below as an extra capacity limit.</p>
@@ -250,7 +240,7 @@
                 <p>Where \(x_i\) is item \(i\)'s batches/sec and \(f\) ranges over every owned facility and level threshold, plus each environment coverage cap from step 2. This is solved exactly (not greedily) with an off-the-shelf simplex solver, so the result is the provably-best combination of rates achievable given shared upstream supply and coverage.</p>
 
                 <h3>4. Rounding to Whole Units: Growers</h3>
-                <p>The linear program's solution is continuous, e.g. "62% of Farmland's soybean plots." A grower facility (Farmland, Woodland, Mineral Pile, and similar) can't actually run a fractional plot; each unit commits to one crop for its whole cycle. So every grower facility's fractional shares get converted to whole counts using the largest-remainder method (the same apportionment technique used to allocate parliament seats), landing as close to the true fractions as an integer solution allows.</p>
+                <p>The linear program's solution is continuous, e.g. "62% of Farmland's soybean plots." A grower facility (Farmland, Woodland, Mine, and similar) can't actually run a fractional plot; each unit commits to one crop for its whole cycle. So every grower facility's fractional shares get converted to whole counts using the largest-remainder method (the same apportionment technique used to allocate parliament seats), landing as close to the true fractions as an integer solution allows.</p>
                 <p>Each item's final rate is then capped by what its grower facilities can actually supply once rounded, taking the minimum against the continuous rate rather than recomputing from scratch, since the continuous solve already accounted for fair sharing at every processor a chain passes through.</p>
 
                 <h3>5. Whole-Unit Dedication: Processors</h3>
@@ -275,8 +265,8 @@
                 <button class="close-button" onclick="closeHelp()">&times;</button>
             </div>
             <div class="modal-body">
-                <h3>1. Pick a Target</h3>
-                <p>Choose Coins or Bud Tickets; only recipes that sell for that currency are considered. Wood Blocks/Mineral Sand aren't a separate target; they come as a byproduct of certain Woodland/Mineral Pile crops regardless of what you're optimizing for, and the "Prioritize Wood Blocks/Mineral Sand" checkbox can guarantee their maximum possible rate even at the cost of Coins/Bud Ticket profit.</p>
+                <h3>1. Choose a Priority</h3>
+                <p>The calculator maximizes Coins. Wood Blocks and Mineral Sand come as a byproduct of Woodland and Mine items regardless, and the "Prioritize Wood Blocks/Mineral Sand" checkbox can guarantee their maximum possible rate even at the cost of some Coin profit.</p>
 
                 <h3>2. Configure Facilities</h3>
                 <p>Set the count and level of each facility you have unlocked in Aniimo Homeland.</p>

@@ -709,10 +709,10 @@ fn calculate_item_requirements(
 }
 
 /// Maps a byproduct-target pseudo-currency name to the resource it names, or `None` if `target`
-/// is an ordinary sellable currency (`"coins"`/`"bud_tickets"`). Wood Blocks/Mineral Sand only
+/// is an ordinary sellable currency (`"coins"`). Wood Blocks/Mineral Sand only
 /// ever come as a side effect of growing/mining (`ProductionItem::byproduct`), never as something
 /// directly sold, so they don't correspond to any `item.sell_currency`; targeting one means
-/// "maximize how much of this resource Woodland/Mineral Pile produces," not "maximize profit."
+/// "maximize how much of this resource Woodland/Mine produces," not "maximize profit."
 pub fn byproduct_resource_name(target: &str) -> Option<&'static str> {
     match target {
         "wood_blocks" => Some("Wood Blocks"),
@@ -732,7 +732,7 @@ pub fn byproduct_resource_name(target: &str) -> Option<&'static str> {
 /// # Arguments
 ///
 /// * `items` - All available production items
-/// * `target_currency` - What to optimize for: a sellable currency (`"coins"`/`"bud_tickets"`) or
+/// * `target_currency` - What to optimize for: a sellable currency (`"coins"`) or
 ///   a byproduct pseudo-currency (`"wood_blocks"`/`"mineral_sand"`; see
 ///   [`byproduct_resource_name`])
 /// * `facility_counts` - Configuration for each facility (count and level)
@@ -766,7 +766,7 @@ pub fn byproduct_resource_name(target: &str) -> Option<&'static str> {
 /// let counts = FacilityCounts::from_pairs(&[
 ///     ("Farmland", 4, 3),        // 4 farmlands at level 3
 ///     ("Woodland", 1, 2),        // 1 woodland at level 2
-///     ("Mineral Pile", 1, 1),    // 1 mineral pile at level 1
+///     ("Mine", 1, 1),            // 1 mine at level 1
 ///     ("Carousel Mill", 2, 2),   // 2 carousel mills at level 2
 ///     ("Jukebox Dryer", 1, 1),
 ///     ("Crafting Table", 1, 1),
@@ -1127,7 +1127,7 @@ pub fn calculate_efficiencies(
 /// let counts = FacilityCounts::from_pairs(&[
 ///     ("Farmland", 4, 3),        // 4 farmlands at level 3
 ///     ("Woodland", 1, 2),        // 1 woodland at level 2
-///     ("Mineral Pile", 1, 1),    // 1 mineral pile at level 1
+///     ("Mine", 1, 1),            // 1 mine at level 1
 ///     ("Carousel Mill", 2, 2),   // 2 carousel mills at level 2
 ///     ("Jukebox Dryer", 1, 1),
 ///     ("Crafting Table", 1, 1),
@@ -1897,6 +1897,29 @@ fn item_lead_time(name: &str, item_map: &HashMap<&str, &ProductionItem>, depth: 
     }
 }
 
+/// Finds the item in `root`'s ingredient tree (possibly `root` itself) that directly consumes
+/// `target`. A recipe ingredient `X` also matches a `target` of `quick_X`, since the quick variant
+/// is what gets grown in its place. Returns `None` if `target` isn't anywhere in the tree.
+///
+/// Used for the plan's "Used for ..." text: each row names only its next step (quick_wheat says
+/// "wheatmeal", not "premium_bread"), and the wheatmeal row names premium_bread in turn.
+fn direct_consumer(root: &str, target: &str, item_map: &HashMap<&str, &ProductionItem>, depth: u32) -> Option<String> {
+    if depth > 8 {
+        return None; // guard against unexpected circular references
+    }
+    let raw_mats = item_map.get(root)?.raw_materials.as_ref()?;
+    if raw_mats.iter().any(|m| m == target || target.strip_prefix("quick_") == Some(m.as_str())) {
+        return Some(root.to_string());
+    }
+    raw_mats.iter().find_map(|m| direct_consumer(m, target, item_map, depth + 1))
+}
+
+/// "Used for ..." text for a row producing `item_name` as part of `chain`'s ingredient tree.
+fn used_for_reason(chain: &str, item_name: &str, item_map: &HashMap<&str, &ProductionItem>) -> String {
+    let consumer = direct_consumer(chain, item_name, item_map, 0).unwrap_or_else(|| chain.to_string());
+    format!("Used for {consumer}")
+}
+
 /// Solves for the provably-optimal simultaneous allocation of every owned facility's capacity
 /// across every candidate item; replacing the old greedy-plus-leftover-patches approach (three
 /// separate mechanisms accumulated over this project's history, each added to fix one more
@@ -2299,7 +2322,7 @@ fn apportion_counts(fractions: &[f64], total: u32, round_up: bool) -> Vec<u32> {
     counts
 }
 
-/// A GROWER facility (Farmland, Woodland, Mineral Pile, ...) has every plot committed to one crop
+/// A GROWER facility (Farmland, Woodland, Mine, ...) has every plot committed to one crop
 /// for its whole cycle; it structurally never hosts a processed item (see the data loaders in
 /// `data.rs`: `load_farmland`/`load_woodland`/`load_workload_raw_material`/`load_nimbus_bed`
 /// always set `raw_materials: None`; `load_processing_*` always set it to `Some`). A PROCESSOR
@@ -2994,7 +3017,7 @@ fn try_environment_exclusion_set(
 }
 
 /// Solves for the provably-optimal simultaneous use of every owned facility for one target,
-/// a currency (`"coins"`/`"bud_tickets"`) or byproduct pseudo-currency (`"wood_blocks"`/
+/// a currency (`"coins"`) or byproduct pseudo-currency (`"wood_blocks"`/
 /// `"mineral_sand"`; see `byproduct_resource_name`), matching `calculate_efficiencies`'
 /// `target_currency`. Target-independent: no goal amount is needed to know the best achievable
 /// rate and facility plan. Pass the result to `time_to_reach_goal` to find out how long a
@@ -3712,11 +3735,11 @@ pub fn find_production_plan_with_progress(
                     }];
                 }
 
-                let reason_for = |eff: &ProductionEfficiency| -> String {
+                let reason_for = |eff: &ProductionEfficiency, item_name: &str| -> String {
                     if eff.item.facility == name {
                         "Sells directly".to_string()
                     } else {
-                        format!("Used for {}", eff.item.name)
+                        used_for_reason(&eff.item.name, item_name, &item_map)
                     }
                 };
 
@@ -3724,7 +3747,7 @@ pub fn find_production_plan_with_progress(
                 let mut steps: Vec<PlanStep> = assigned
                     .iter()
                     .map(|(item_name, eff, count)| {
-                        let reason = reason_for(eff);
+                        let reason = reason_for(eff, item_name);
                         // The item is the actual crop grown here (e.g. "rose"), which may be a
                         // different item than `eff.item` (e.g. rose_incense) when this grower
                         // feeds a further-processed chain; so its own production_time (not
@@ -3795,7 +3818,7 @@ pub fn find_production_plan_with_progress(
                 if item_name == eff.item.name {
                     "Sells directly".to_string()
                 } else {
-                    format!("Used for {}", eff.item.name)
+                    used_for_reason(&eff.item.name, item_name, &item_map)
                 }
             };
 
@@ -3987,7 +4010,7 @@ pub fn time_to_reach_goal(plan: &ProductionPlan, target: f64, current: f64) -> O
     // duration; one seed per planting, ceiling (not floor) because a seed is already spent
     // starting a cycle that might still be in progress when `total_time` is reached, even though
     // that cycle's output isn't counted as a completed unit yet (see `SeedRequirement`'s doc
-    // comment). Seeds only exist for Farmland and Woodland plots; Mineral Pile is mined (no
+    // comment). Seeds only exist for Farmland and Woodland plots; Mine is mined (no
     // seed), and the Aniimo-dispatch facilities (Nimbus Bed, Grass Blossom Mat, Starfall Hammock,
     // Tidewhisper Sandcastle, Dewy House) are harvested via family dispatch, not planted either.
     // Processor rows are skipped too: they aren't planted, so they never need seeds.

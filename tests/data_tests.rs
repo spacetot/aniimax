@@ -37,12 +37,13 @@ fn test_loaded_items_have_valid_data() {
     }
 }
 
-// quartz/quick_quartz/gem are Mineral Sand-heavy recipes: most of each batch is Mineral Sand
-// byproduct, with only a small sellable quartz/gem yield (e.g. quartz yields 4, with 63 Mineral
-// Sand as byproduct). Locks in these values so a future data edit can't silently swap the
-// `yield`/`byproduct_yield` columns in mineral_pile.csv.
+// The higher-tier Mine items are Mineral Sand-heavy: most of each batch is byproduct, with only a
+// small sellable yield (quartz_ore yields 4 against 86 Mineral Sand). That inversion makes the
+// `yield`/`byproduct_yield` columns easy to transpose by accident, so this locks the real values
+// in. Byproduct also scales purely with facility level, not with the specific item, which is the
+// other half of what's asserted here.
 #[test]
-fn test_mineral_pile_quartz_and_gem_yields_are_not_swapped_with_byproduct() {
+fn test_mine_yields_are_not_swapped_with_byproduct() {
     let data_dir = Path::new("data");
     if !data_dir.exists() {
         return;
@@ -52,25 +53,30 @@ fn test_mineral_pile_quartz_and_gem_yields_are_not_swapped_with_byproduct() {
     let get = |name: &str| {
         items
             .iter()
-            .find(|i| i.name == name && i.facility == "Mineral Pile")
-            .unwrap_or_else(|| panic!("{name} should exist in Mineral Pile data"))
+            .find(|i| i.name == name && i.facility == "Mine")
+            .unwrap_or_else(|| panic!("{name} should exist in Mine data"))
     };
 
-    let quartz = get("quartz");
-    assert_eq!(quartz.yield_amount, 4, "quartz's real sellable yield is 4, not 63");
-    assert_eq!(quartz.byproduct, Some(("Mineral Sand".to_string(), 63)));
-
-    let quick_quartz = get("quick_quartz");
-    assert_eq!(quick_quartz.yield_amount, 6, "quick_quartz's real sellable yield is 6, not 63");
-    assert_eq!(quick_quartz.byproduct, Some(("Mineral Sand".to_string(), 63)));
-    assert!(
-        quick_quartz.yield_amount > quartz.yield_amount,
-        "quick_quartz should out-yield plain quartz, same as every other quick_* variant"
-    );
+    let quartz_ore = get("quartz_ore");
+    assert_eq!(quartz_ore.yield_amount, 4, "quartz_ore's real sellable yield is 4, not 86");
+    assert_eq!(quartz_ore.byproduct, Some(("Mineral Sand".to_string(), 86)));
 
     let gem = get("gem");
-    assert_eq!(gem.yield_amount, 2, "gem's real sellable yield is 2, not 102");
-    assert_eq!(gem.byproduct, Some(("Mineral Sand".to_string(), 102)));
+    assert_eq!(gem.yield_amount, 2, "gem's real sellable yield is 2, not 122");
+    assert_eq!(gem.byproduct, Some(("Mineral Sand".to_string(), 122)));
+
+    // Sellable yield falls as tier rises while byproduct climbs; if a future edit transposes the
+    // columns for any row, one of these two orderings breaks.
+    let rock = get("rock");
+    assert!(
+        rock.yield_amount > quartz_ore.yield_amount && quartz_ore.yield_amount > gem.yield_amount,
+        "sellable yield should fall with tier: rock > quartz_ore > gem"
+    );
+    let sand = |i: &aniimax::models::ProductionItem| i.byproduct.as_ref().map(|(_, n)| *n).unwrap_or(0);
+    assert!(
+        sand(rock) < sand(quartz_ore) && sand(quartz_ore) < sand(gem),
+        "Mineral Sand byproduct should climb with tier: rock < quartz_ore < gem"
+    );
 }
 
 #[test]
@@ -84,9 +90,149 @@ fn test_currency_types() {
 
     for item in &items {
         assert!(
-            item.sell_currency == "coins" || item.sell_currency == "bud_tickets",
-            "Currency should be 'coins' or 'bud_tickets', got: {}",
+            item.sell_currency == "coins",
+            "Currency should be 'coins' (the release has no other currency), got: {}",
             item.sell_currency
         );
+    }
+}
+
+// Data-entry checks. These catch transcription and formatting mistakes when new game data is
+// added, before they quietly skew the optimizer.
+
+/// Ingredients referenced by a recipe that no facility in the data produces yet. When the facility
+/// that makes one of these is added, remove it from this list; when a new recipe references
+/// something not yet in the data, add it here deliberately.
+const KNOWN_MISSING_INGREDIENTS: &[&str] = &[
+    "cotton_fabric",
+    "cotton_thread",
+    "dyed_cotton_fabric",
+    "palm_rope",
+    "petals",
+    "rose_incense",
+    "scales",
+    "star",
+    "wool_fabric",
+    "woolen_yarn",
+];
+
+fn load_items() -> Option<Vec<aniimax::models::ProductionItem>> {
+    let data_dir = Path::new("data");
+    data_dir.exists().then(|| load_all_data(data_dir).expect("Failed to load data"))
+}
+
+#[test]
+fn test_every_ingredient_is_produced_somewhere() {
+    let Some(items) = load_items() else { return };
+    let names: std::collections::HashSet<&str> = items.iter().map(|i| i.name.as_str()).collect();
+
+    let mut missing: Vec<String> = items
+        .iter()
+        .filter_map(|i| i.raw_materials.as_ref())
+        .flatten()
+        .filter(|m| !names.contains(m.as_str()))
+        .cloned()
+        .collect();
+    missing.sort();
+    missing.dedup();
+
+    let unexpected: Vec<&String> =
+        missing.iter().filter(|m| !KNOWN_MISSING_INGREDIENTS.contains(&m.as_str())).collect();
+    assert!(
+        unexpected.is_empty(),
+        "these ingredients aren't produced by any facility (check the spelling, or add them to \
+         KNOWN_MISSING_INGREDIENTS): {unexpected:?}"
+    );
+
+    let now_produced: Vec<&&str> =
+        KNOWN_MISSING_INGREDIENTS.iter().filter(|m| names.contains(**m)).collect();
+    assert!(
+        now_produced.is_empty(),
+        "these are produced now; remove them from KNOWN_MISSING_INGREDIENTS: {now_produced:?}"
+    );
+}
+
+#[test]
+fn test_item_names_are_unique_and_snake_case() {
+    let Some(items) = load_items() else { return };
+    let mut seen = std::collections::HashMap::new();
+    for item in &items {
+        assert!(
+            !item.name.is_empty()
+                && item.name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_'),
+            "item names must be lowercase with underscores (e.g. `milled_rice`), got {:?} at {}",
+            item.name,
+            item.facility
+        );
+        if let Some(other) = seen.insert(item.name.as_str(), item.facility.as_str()) {
+            panic!("{} is listed twice (at {} and {})", item.name, other, item.facility);
+        }
+        for m in item.raw_materials.iter().flatten() {
+            assert!(
+                m.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_'),
+                "{}'s ingredient {m:?} should be lowercase with underscores",
+                item.name
+            );
+        }
+    }
+}
+
+#[test]
+fn test_item_values_are_in_range() {
+    let Some(items) = load_items() else { return };
+    const ENVIRONMENTS: &[&str] = &["Warm", "Scorching", "Cool", "Freeze", "Adequate"];
+    const MODULES: &[&str] = &["ecological_module", "kitchen_module", "resource_detector", "crafting_module"];
+
+    for item in &items {
+        let name = &item.name;
+        assert!(item.sell_value > 0.0, "{name} has no sell value");
+        assert!(item.yield_amount > 0, "{name} has no yield");
+        assert!(item.production_time > 0.0, "{name} has no grow time or workload");
+        assert!((1..=10).contains(&item.facility_level), "{name} has facility level {}", item.facility_level);
+        if let Some(env) = &item.environment {
+            assert!(ENVIRONMENTS.contains(&env.as_str()), "{name} has unknown environment {env:?}");
+        }
+        if let Some((module, level)) = &item.module_requirement {
+            assert!(MODULES.contains(&module.as_str()), "{name} needs unknown module {module:?}");
+            assert!((1..=10).contains(level), "{name} needs {module} level {level}");
+        }
+        match (&item.raw_materials, &item.required_amount) {
+            (Some(mats), Some(amounts)) => {
+                assert_eq!(
+                    mats.len(),
+                    amounts.len(),
+                    "{name} lists {} ingredients but {} amounts",
+                    mats.len(),
+                    amounts.len()
+                );
+                assert!(amounts.iter().all(|&a| a > 0), "{name} has an ingredient amount of 0");
+            }
+            (None, None) => {}
+            _ => panic!("{name} has ingredients without amounts, or amounts without ingredients"),
+        }
+    }
+}
+
+// A quick variant is the same item grown or gathered faster: it sells for the same price, costs the
+// same seed, yields more per batch, and is always gated by a module.
+#[test]
+fn test_quick_variants_match_their_base_item() {
+    let Some(items) = load_items() else { return };
+    for quick in items.iter().filter(|i| i.name.starts_with("quick_")) {
+        let base_name = &quick.name["quick_".len()..];
+        let base = items
+            .iter()
+            .find(|i| i.name == base_name)
+            .unwrap_or_else(|| panic!("{} has no base item named {base_name}", quick.name));
+        assert_eq!(quick.facility, base.facility, "{} and {base_name} should share a facility", quick.name);
+        assert_eq!(quick.sell_value, base.sell_value, "{} should sell for the same as {base_name}", quick.name);
+        assert_eq!(quick.cost, base.cost, "{} should cost the same seed as {base_name}", quick.name);
+        assert!(quick.yield_amount > base.yield_amount, "{} should yield more than {base_name}", quick.name);
+        assert!(
+            quick.facility_level >= base.facility_level,
+            "{} unlocks before {base_name}",
+            quick.name
+        );
+        assert!(quick.module_requirement.is_some(), "{} should need a module", quick.name);
     }
 }

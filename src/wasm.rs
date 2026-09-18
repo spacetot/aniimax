@@ -25,6 +25,25 @@ fn default_level() -> u32 {
     1
 }
 
+/// JavaScript-friendly description of the Aniimo working a facility; see
+/// [`crate::models::Worker`].
+#[derive(Debug, Clone, Deserialize)]
+pub struct JsWorker {
+    #[serde(default = "default_level")]
+    pub suitability: u32,
+    #[serde(default)]
+    pub personality_bonus: bool,
+}
+
+/// Builds [`crate::models::Workers`] from a facility-name -> worker map.
+fn workers_from(map: &std::collections::HashMap<String, JsWorker>) -> crate::models::Workers {
+    let mut workers = crate::models::Workers::new();
+    for (facility, w) in map {
+        workers.set(facility, crate::models::Worker::new(w.suitability, w.personality_bonus));
+    }
+    workers
+}
+
 /// JavaScript-friendly module levels configuration.
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct JsModuleLevels {
@@ -33,14 +52,14 @@ pub struct JsModuleLevels {
     #[serde(default)]
     pub kitchen_module: u32,
     #[serde(default)]
-    pub mineral_detector: u32,
+    pub resource_detector: u32,
     #[serde(default)]
     pub crafting_module: u32,
 }
 
 /// JavaScript-friendly input for optimization.
 ///
-/// `facilities` maps facility display name (e.g. "Farmland", "Mineral Pile"; matching the
+/// `facilities` maps facility display name (e.g. "Farmland", "Mine"; matching the
 /// `facility` field used throughout the Rust data model) to its count/level config. Using a
 /// map instead of fixed fields lets the web UI add new facilities (of which the new beta has
 /// many) without changing this struct.
@@ -56,6 +75,10 @@ pub struct JsOptimizeInput {
     pub facilities: std::collections::HashMap<String, JsFacilityConfig>,
     #[serde(default)]
     pub modules: JsModuleLevels,
+    /// Aniimo working each facility, keyed by facility name; facilities left out get a level-1
+    /// Aniimo without the personality bonus.
+    #[serde(default)]
+    pub workers: std::collections::HashMap<String, JsWorker>,
 }
 
 impl JsOptimizeInput {
@@ -242,21 +265,21 @@ fn get_embedded_items() -> Vec<ProductionItem> {
         });
     }
 
-    // Mineral Pile items (workload-based; production_time derived via MINERAL_PILE_WORKLOAD_RATE)
-    let mineral_data = include_str!("../data/mineral_pile.csv");
+    // Mine items (workload-based; production_time is for a level-1 Aniimo until Workers::apply)
+    let mine_data = include_str!("../data/mine.csv");
     let mut rdr = ReaderBuilder::new()
         .trim(csv::Trim::All)
-        .from_reader(mineral_data.as_bytes());
+        .from_reader(mine_data.as_bytes());
     for row in rdr.deserialize::<crate::models::MineralRow>().flatten() {
         items.push(ProductionItem {
             name: row.name,
-            facility: "Mineral Pile".to_string(),
+            facility: "Mine".to_string(),
             raw_materials: None,
             required_amount: None,
             cost: None,
             sell_currency: row.sell_currency,
             sell_value: row.sell_value,
-            production_time: row.workload / crate::models::WORKLOAD_RATE_ESTIMATE,
+            production_time: crate::models::Worker::default().seconds_for(row.workload),
             yield_amount: row.yield_amount,
             energy: None,
             facility_level: row.facility_level,
@@ -269,116 +292,33 @@ fn get_embedded_items() -> Vec<ProductionItem> {
         });
     }
 
-    // Grass Blossom Mat items (same CSV shape as Mineral Pile; facility level/byproduct
-    // unconfirmed for this facility)
-    let grass_blossom_data = include_str!("../data/grass_blossom_mat.csv");
-    let mut rdr = ReaderBuilder::new()
-        .trim(csv::Trim::All)
-        .from_reader(grass_blossom_data.as_bytes());
-    for row in rdr.deserialize::<crate::models::MineralRow>().flatten() {
-        items.push(ProductionItem {
-            name: row.name,
-            facility: "Grass Blossom Mat".to_string(),
-            raw_materials: None,
-            required_amount: None,
-            cost: None,
-            sell_currency: row.sell_currency,
-            sell_value: row.sell_value,
-            production_time: row.workload / crate::models::WORKLOAD_RATE_ESTIMATE,
-            yield_amount: row.yield_amount,
-            energy: None,
-            facility_level: row.facility_level,
-            module_requirement: parse_module_requirement(&row.module_requirement),
-            workload: Some(row.workload),
-            byproduct: row
-                .byproduct_yield
-                .map(|amt| ("Mineral Sand".to_string(), amt)),
-            environment: row.environment,
-        });
-    }
-
-    // Tidewhisper Sandcastle items (facility level guessed as 1; requires Cool/Freeze growing
-    // environment, not yet modeled as a hard gate)
-    let tidewhisper_data = include_str!("../data/tidewhisper_sandcastle.csv");
-    let mut rdr = ReaderBuilder::new()
-        .trim(csv::Trim::All)
-        .from_reader(tidewhisper_data.as_bytes());
-    for row in rdr.deserialize::<crate::models::MineralRow>().flatten() {
-        items.push(ProductionItem {
-            name: row.name,
-            facility: "Tidewhisper Sandcastle".to_string(),
-            raw_materials: None,
-            required_amount: None,
-            cost: None,
-            sell_currency: row.sell_currency,
-            sell_value: row.sell_value,
-            production_time: row.workload / crate::models::WORKLOAD_RATE_ESTIMATE,
-            yield_amount: row.yield_amount,
-            energy: None,
-            facility_level: row.facility_level,
-            module_requirement: parse_module_requirement(&row.module_requirement),
-            workload: Some(row.workload),
-            byproduct: row
-                .byproduct_yield
-                .map(|amt| ("Mineral Sand".to_string(), amt)),
-            environment: row.environment,
-        });
-    }
-
-    // Starfall Hammock items (facility level guessed as 1; requires Cool growing environment,
-    // not yet modeled as a hard gate)
-    let starfall_data = include_str!("../data/starfall_hammock.csv");
-    let mut rdr = ReaderBuilder::new()
-        .trim(csv::Trim::All)
-        .from_reader(starfall_data.as_bytes());
-    for row in rdr.deserialize::<crate::models::MineralRow>().flatten() {
-        items.push(ProductionItem {
-            name: row.name,
-            facility: "Starfall Hammock".to_string(),
-            raw_materials: None,
-            required_amount: None,
-            cost: None,
-            sell_currency: row.sell_currency,
-            sell_value: row.sell_value,
-            production_time: row.workload / crate::models::WORKLOAD_RATE_ESTIMATE,
-            yield_amount: row.yield_amount,
-            energy: None,
-            facility_level: row.facility_level,
-            module_requirement: parse_module_requirement(&row.module_requirement),
-            workload: Some(row.workload),
-            byproduct: row
-                .byproduct_yield
-                .map(|amt| ("Mineral Sand".to_string(), amt)),
-            environment: row.environment,
-        });
-    }
-
-    // Dewy House items (facility level guessed as 1; requires Warm growing environment, not yet
-    // modeled as a hard gate)
-    let dewy_data = include_str!("../data/dewy_house.csv");
-    let mut rdr = ReaderBuilder::new()
-        .trim(csv::Trim::All)
-        .from_reader(dewy_data.as_bytes());
-    for row in rdr.deserialize::<crate::models::MineralRow>().flatten() {
-        items.push(ProductionItem {
-            name: row.name,
-            facility: "Dewy House".to_string(),
-            raw_materials: None,
-            required_amount: None,
-            cost: None,
-            sell_currency: row.sell_currency,
-            sell_value: row.sell_value,
-            production_time: row.workload / crate::models::WORKLOAD_RATE_ESTIMATE,
-            yield_amount: row.yield_amount,
-            energy: None,
-            facility_level: row.facility_level,
-            module_requirement: parse_module_requirement(&row.module_requirement),
-            workload: Some(row.workload),
-            byproduct: row
-                .byproduct_yield
-                .map(|amt| ("Mineral Sand".to_string(), amt)),
-            environment: row.environment,
-        });
+    // Well and Tidewhisper Sandcastle items (same CSV shape as Mine; no byproduct)
+    for (facility, data) in [
+        ("Well", include_str!("../data/well.csv")),
+        ("Tidewhisper Sandcastle", include_str!("../data/tidewhisper_sandcastle.csv")),
+    ] {
+        let mut rdr = ReaderBuilder::new()
+            .trim(csv::Trim::All)
+            .from_reader(data.as_bytes());
+        for row in rdr.deserialize::<crate::models::MineralRow>().flatten() {
+            items.push(ProductionItem {
+                name: row.name,
+                facility: facility.to_string(),
+                raw_materials: None,
+                required_amount: None,
+                cost: None,
+                sell_currency: row.sell_currency,
+                sell_value: row.sell_value,
+                production_time: crate::models::Worker::default().seconds_for(row.workload),
+                yield_amount: row.yield_amount,
+                energy: None,
+                facility_level: row.facility_level,
+                module_requirement: parse_module_requirement(&row.module_requirement),
+                workload: Some(row.workload),
+                byproduct: None,
+                environment: row.environment,
+            });
+        }
     }
 
     // Carousel Mill items
@@ -391,7 +331,7 @@ fn get_embedded_items() -> Vec<ProductionItem> {
         let req_amounts = parse_required_amounts(&row.required_amount);
         let production_time = row
             .workload
-            .map(|w| w / crate::models::WORKLOAD_RATE_ESTIMATE)
+            .map(|w| crate::models::Worker::default().seconds_for(w))
             .or(row.production_time)
             .expect("row must have either workload or production_time");
         items.push(ProductionItem {
@@ -426,7 +366,7 @@ fn get_embedded_items() -> Vec<ProductionItem> {
         let req_amounts = parse_required_amounts(&row.required_amount);
         let production_time = row
             .workload
-            .map(|w| w / crate::models::WORKLOAD_RATE_ESTIMATE)
+            .map(|w| crate::models::Worker::default().seconds_for(w))
             .or(row.production_time)
             .expect("row must have either workload or production_time");
         items.push(ProductionItem {
@@ -461,7 +401,7 @@ fn get_embedded_items() -> Vec<ProductionItem> {
         let req_amounts = parse_required_amounts(&row.required_amount);
         let production_time = row
             .workload
-            .map(|w| w / crate::models::WORKLOAD_RATE_ESTIMATE)
+            .map(|w| crate::models::Worker::default().seconds_for(w))
             .or(row.production_time)
             .expect("row must have either workload or production_time");
         items.push(ProductionItem {
@@ -486,173 +426,46 @@ fn get_embedded_items() -> Vec<ProductionItem> {
         });
     }
 
-    // Crafting Table items
-    let crafting_data = include_str!("../data/crafting_table.csv");
-    let mut rdr = ReaderBuilder::new()
-        .trim(csv::Trim::All)
-        .from_reader(crafting_data.as_bytes());
-    for row in rdr.deserialize::<crate::models::ProcessingRowNoEnergy>().flatten() {
-        let raw_mats = parse_raw_materials(&row.raw_materials);
-        let req_amounts = parse_required_amounts(&row.required_amount);
-        let production_time = row
-            .workload
-            .map(|w| w / crate::models::WORKLOAD_RATE_ESTIMATE)
-            .or(row.production_time)
-            .expect("row must have either workload or production_time");
-        items.push(ProductionItem {
-            name: row.name,
-            facility: "Crafting Table".to_string(),
-            raw_materials: Some(raw_mats),
-            required_amount: Some(req_amounts),
-            cost: None,
-            sell_currency: row
-                .sell_currency
-                .clone()
-                .unwrap_or_else(|| "coins".to_string()),
-            sell_value: row.sell_value,
-            production_time,
-            yield_amount: 1,
-            energy: None,
-            facility_level: row.facility_level,
-            module_requirement: parse_module_requirement(&row.module_requirement),
-            workload: row.workload,
-            byproduct: None,
-            environment: None,
-        });
+    // Crafting Table and Simmering Pot items (same CSV layout)
+    for (facility, data) in [
+        ("Crafting Table", include_str!("../data/crafting_table.csv")),
+        ("Simmering Pot", include_str!("../data/simmering_pot.csv")),
+    ] {
+        let mut rdr = ReaderBuilder::new()
+            .trim(csv::Trim::All)
+            .from_reader(data.as_bytes());
+        for row in rdr.deserialize::<crate::models::ProcessingRowNoEnergy>().flatten() {
+            let raw_mats = parse_raw_materials(&row.raw_materials);
+            let req_amounts = parse_required_amounts(&row.required_amount);
+            let production_time = row
+                .workload
+                .map(|w| crate::models::Worker::default().seconds_for(w))
+                .or(row.production_time)
+                .expect("row must have either workload or production_time");
+            items.push(ProductionItem {
+                name: row.name,
+                facility: facility.to_string(),
+                raw_materials: Some(raw_mats),
+                required_amount: Some(req_amounts),
+                cost: None,
+                sell_currency: row
+                    .sell_currency
+                    .clone()
+                    .unwrap_or_else(|| "coins".to_string()),
+                sell_value: row.sell_value,
+                production_time,
+                yield_amount: 1,
+                energy: None,
+                facility_level: row.facility_level,
+                module_requirement: parse_module_requirement(&row.module_requirement),
+                workload: row.workload,
+                byproduct: None,
+                environment: None,
+            });
+        }
     }
 
-    // Note: Dance Pad Polisher and Aniipod Maker are excluded: they don't produce coins/Bud
-    // Tickets, so they're out of scope for this optimizer.
-
-    // Phonolfactory Table items
-    let phono_data = include_str!("../data/phonolfactory_table.csv");
-    let mut rdr = ReaderBuilder::new()
-        .trim(csv::Trim::All)
-        .from_reader(phono_data.as_bytes());
-    for row in rdr.deserialize::<crate::models::ProcessingRowNoEnergy>().flatten() {
-        let raw_mats = parse_raw_materials(&row.raw_materials);
-        let req_amounts = parse_required_amounts(&row.required_amount);
-        let production_time = row
-            .workload
-            .map(|w| w / crate::models::WORKLOAD_RATE_ESTIMATE)
-            .or(row.production_time)
-            .expect("row must have either workload or production_time");
-        items.push(ProductionItem {
-            name: row.name,
-            facility: "Phonolfactory Table".to_string(),
-            raw_materials: Some(raw_mats),
-            required_amount: Some(req_amounts),
-            cost: None,
-            sell_currency: row
-                .sell_currency
-                .clone()
-                .unwrap_or_else(|| "coins".to_string()),
-            sell_value: row.sell_value,
-            production_time,
-            yield_amount: 1,
-            energy: None,
-            facility_level: row.facility_level,
-            module_requirement: parse_module_requirement(&row.module_requirement),
-            workload: row.workload,
-            byproduct: None,
-            environment: None,
-        });
-    }
-
-    // Bouncy Brew Keg items
-    let brew_data = include_str!("../data/bouncy_brew_keg.csv");
-    let mut rdr = ReaderBuilder::new()
-        .trim(csv::Trim::All)
-        .from_reader(brew_data.as_bytes());
-    for row in rdr.deserialize::<crate::models::ProcessingRowNoEnergy>().flatten() {
-        let raw_mats = parse_raw_materials(&row.raw_materials);
-        let req_amounts = parse_required_amounts(&row.required_amount);
-        let production_time = row
-            .workload
-            .map(|w| w / crate::models::WORKLOAD_RATE_ESTIMATE)
-            .or(row.production_time)
-            .expect("row must have either workload or production_time");
-        items.push(ProductionItem {
-            name: row.name,
-            facility: "Bouncy Brew Keg".to_string(),
-            raw_materials: Some(raw_mats),
-            required_amount: Some(req_amounts),
-            cost: None,
-            sell_currency: row
-                .sell_currency
-                .clone()
-                .unwrap_or_else(|| "coins".to_string()),
-            sell_value: row.sell_value,
-            production_time,
-            yield_amount: 1,
-            energy: None,
-            facility_level: row.facility_level,
-            module_requirement: parse_module_requirement(&row.module_requirement),
-            workload: row.workload,
-            byproduct: None,
-            environment: None,
-        });
-    }
-
-    // Joy Wheel Loom items
-    let joy_wheel_data = include_str!("../data/joy_wheel_loom.csv");
-    let mut rdr = ReaderBuilder::new()
-        .trim(csv::Trim::All)
-        .from_reader(joy_wheel_data.as_bytes());
-    for row in rdr.deserialize::<crate::models::ProcessingRowNoEnergy>().flatten() {
-        let raw_mats = parse_raw_materials(&row.raw_materials);
-        let req_amounts = parse_required_amounts(&row.required_amount);
-        let production_time = row
-            .workload
-            .map(|w| w / crate::models::WORKLOAD_RATE_ESTIMATE)
-            .or(row.production_time)
-            .expect("row must have either workload or production_time");
-        items.push(ProductionItem {
-            name: row.name,
-            facility: "Joy Wheel Loom".to_string(),
-            raw_materials: Some(raw_mats),
-            required_amount: Some(req_amounts),
-            cost: None,
-            sell_currency: row
-                .sell_currency
-                .clone()
-                .unwrap_or_else(|| "coins".to_string()),
-            sell_value: row.sell_value,
-            production_time,
-            yield_amount: 1,
-            energy: None,
-            facility_level: row.facility_level,
-            module_requirement: parse_module_requirement(&row.module_requirement),
-            workload: row.workload,
-            byproduct: None,
-            environment: None,
-        });
-    }
-
-    // Nimbus Bed items (produces Wool and Petals)
-    let nimbus_data = include_str!("../data/nimbus_bed.csv");
-    let mut rdr = ReaderBuilder::new()
-        .trim(csv::Trim::All)
-        .from_reader(nimbus_data.as_bytes());
-    for row in rdr.deserialize::<crate::models::NimbusBedRow>().flatten() {
-        items.push(ProductionItem {
-            name: row.name,
-            facility: "Nimbus Bed".to_string(),
-            raw_materials: None,
-            required_amount: None,
-            cost: None,
-            sell_currency: "coins".to_string(),
-            sell_value: row.sell_value,
-            production_time: row.workload / crate::models::WORKLOAD_RATE_ESTIMATE,
-            yield_amount: row.yield_amount,
-            energy: None,
-            facility_level: 1,
-            module_requirement: None,
-            workload: Some(row.workload),
-            byproduct: None,
-            environment: None,
-        });
-    }
+    // Only facilities verified against the full release are embedded; see `crate::data::load_all_data`.
 
     items
 }
@@ -689,11 +502,12 @@ pub fn optimize(input_json: &str) -> String {
     let module_levels = ModuleLevels {
         ecological_module: input.modules.ecological_module,
         kitchen_module: input.modules.kitchen_module,
-        mineral_detector: input.modules.mineral_detector,
+        resource_detector: input.modules.resource_detector,
         crafting_module: input.modules.crafting_module,
     };
 
-    let items = get_embedded_items();
+    let mut items = get_embedded_items();
+    workers_from(&input.workers).apply(&mut items);
 
     let efficiencies = calculate_efficiencies(&items, &input.currency, &facility_counts, &module_levels);
 
@@ -843,7 +657,7 @@ fn default_true() -> bool {
 /// rate and facility plan, with no goal amount (see [`JsGoalInput`] for that).
 #[derive(Debug, Clone, Deserialize)]
 pub struct JsPlanInput {
-    /// `"coins"`/`"bud_tickets"` (matches `ProductionItem::sell_currency`), or a byproduct
+    /// `"coins"` (matches `ProductionItem::sell_currency`), or a byproduct
     /// pseudo-currency target: `"wood_blocks"`/`"mineral_sand"`; see
     /// `crate::optimizer::byproduct_resource_name`.
     #[serde(default = "default_currency")]
@@ -857,6 +671,10 @@ pub struct JsPlanInput {
     pub facilities: std::collections::HashMap<String, Vec<JsFacilityConfig>>,
     #[serde(default)]
     pub modules: JsModuleLevels,
+    /// Aniimo working each facility, keyed by facility name; facilities left out get a level-1
+    /// Aniimo without the personality bonus.
+    #[serde(default)]
+    pub workers: std::collections::HashMap<String, JsWorker>,
     /// See `crate::optimizer::find_production_plan`'s doc comment on `prioritize_byproducts`;
     /// defaults to `true` (checked by default in the UI) since Wood Blocks/Mineral Sand can be a
     /// real in-game constraint players can't just buy their way around.
@@ -1154,11 +972,12 @@ pub fn find_plan(input_json: &str, on_progress: Option<js_sys::Function>) -> Str
     let module_levels = ModuleLevels {
         ecological_module: input.modules.ecological_module,
         kitchen_module: input.modules.kitchen_module,
-        mineral_detector: input.modules.mineral_detector,
+        resource_detector: input.modules.resource_detector,
         crafting_module: input.modules.crafting_module,
     };
 
-    let items = get_embedded_items();
+    let mut items = get_embedded_items();
+    workers_from(&input.workers).apply(&mut items);
 
     // `js_sys::Function::call1` takes `&JsValue` for both the `this` receiver and the argument;
     // errors (e.g. the JS callback itself throwing) are deliberately swallowed with `let _ =`,
@@ -1367,6 +1186,9 @@ struct RecipeInfo {
     sell_currency: String,
     sell_value: f64,
     production_time: f64,
+    /// Set for Aniimo-worked items, whose real time depends on the Aniimo; see
+    /// [`crate::models::Worker`].
+    workload: Option<f64>,
     yield_amount: u32,
     cost: Option<f64>,
     raw_materials: Option<Vec<String>>,
@@ -1389,6 +1211,7 @@ pub fn get_all_items() -> String {
             sell_currency: item.sell_currency.clone(),
             sell_value: item.sell_value,
             production_time: item.production_time,
+            workload: item.workload,
             yield_amount: item.yield_amount,
             cost: item.cost,
             raw_materials: item.raw_materials.clone(),
@@ -1399,4 +1222,34 @@ pub fn get_all_items() -> String {
         .collect();
 
     serde_json::to_string(&recipes).unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::get_embedded_items;
+
+    // The web build embeds its own copy of every CSV. A facility added to `load_all_data` but not
+    // here (or the reverse) would silently disappear from the web app.
+    #[test]
+    fn embedded_items_match_the_data_directory() {
+        let data_dir = std::path::Path::new("data");
+        if !data_dir.exists() {
+            return;
+        }
+        let describe = |items: Vec<crate::models::ProductionItem>| {
+            let mut rows: Vec<String> = items.iter().map(|i| format!("{i:?}")).collect();
+            rows.sort();
+            rows
+        };
+        let from_files = describe(crate::data::load_all_data(data_dir).expect("Failed to load data"));
+        let embedded = describe(get_embedded_items());
+        let only_files: Vec<&String> = from_files.iter().filter(|r| !embedded.contains(r)).collect();
+        let only_embedded: Vec<&String> = embedded.iter().filter(|r| !from_files.contains(r)).collect();
+        assert!(
+            only_files.is_empty() && only_embedded.is_empty(),
+            "web build and data directory disagree.
+only in data/: {only_files:#?}
+only embedded: {only_embedded:#?}"
+        );
+    }
 }
