@@ -677,16 +677,15 @@ function renderLevelUp(plan) {
             <td>${ready}</td>
         </tr>`;
     }).join('');
-    // Coins keep coming in while the slower costs finish: what's on hand when everything's ready.
-    const coins = report.requirements.find(r => r.name === 'coins');
-    let coinsNote = '';
-    if (coins) {
-        const onHand = coins.have + coins.per_second * report.seconds;
-        const spare = onHand - coins.need;
-        if (spare >= 1) {
-            coinsNote = `<p class="level-up-coins">When it's ready you'll have <strong>${formatNumber(Math.floor(onHand))} coins</strong>, so <strong>${formatNumber(Math.floor(spare))}</strong> left after paying for the level-up.</p>`;
-        }
-    }
+    // What's left over once everything is ready and paid for: costs that finish early keep coming
+    // in while the slowest one finishes.
+    const surplus = report.requirements
+        .map(r => ({ name: r.name, spare: Math.floor(r.have + r.per_second * report.seconds - r.need) }))
+        .filter(r => r.spare >= 1)
+        .map(r => `${formatNumber(r.spare)} ${r.name === 'coins' ? 'coins' : ITEM_NAMES[r.name] || prettyItem(r.name)}`);
+    const coinsNote = surplus.length
+        ? `<p class="level-up-coins"><span>Surplus:</span> <strong>${surplus.join(', ')}</strong></p>`
+        : '';
     lines.innerHTML = `
         <table class="level-up-lines">
             <thead><tr><th>Cost</th><th>Need</th><th>Have</th><th>Per hour</th><th>Ready in</th></tr></thead>
