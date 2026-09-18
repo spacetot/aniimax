@@ -158,11 +158,11 @@ deep_rock_spring_water, Well, Water, 3
 quick_deep_rock_spring_water, Well, Water, 3
 natural_mineral_spring_water, Well, Water, 3
 quick_natural_mineral_spring_water, Well, Water, 3
-rough_lumber, Woodworking Bench, Artisanship, 1
-standard_planks, Woodworking Bench, Artisanship, 1
-laminated_beams, Woodworking Bench, Artisanship, 1
-densified_timber_component, Woodworking Bench, Artisanship, 1
-coarse_sifted_ore, Chimney Kiln, Fire, 1
-sintered_ore_brick, Chimney Kiln, Fire, 1
-refined_ore, Chimney Kiln, Fire, 1
-microcrystalline_ore_plate, Chimney Kiln, Fire, 1
+rough_lumber, Woodworking Bench, Artisanship, 2
+standard_planks, Woodworking Bench, Artisanship, 2
+laminated_beams, Woodworking Bench, Artisanship, 2
+densified_timber_component, Woodworking Bench, Artisanship, 2
+coarse_sifted_ore, Chimney Kiln, Fire, 2
+sintered_ore_brick, Chimney Kiln, Fire, 2
+refined_ore, Chimney Kiln, Fire, 2
+microcrystalline_ore_plate, Chimney Kiln, Fire, 2
