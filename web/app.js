@@ -433,20 +433,31 @@ function populateHomeLevels() {
 function renderSimpleSummary() {
     const homeLevel = selectedHomeLevel();
     const { facilities, modules } = simpleSetup(homeLevel);
+    const chip = (count, name, level) => `
+        <div class="chip"><span><span class="chip-count">${count}</span> ${name}</span>${level ? `<span class="chip-level">${level}</span>` : ''}</div>`;
     const built = FACILITIES
         .map(f => ({ name: f.name, tier: facilities[f.name][0], hasLevels: f.hasLevels !== false }))
         .filter(({ tier }) => tier.count > 0)
-        .map(({ name, tier, hasLevels }) => `${tier.count} ${name}${hasLevels ? ` Lv.${tier.level}` : ''}`);
-    const estimate = homeLevel > COUNTS_CONFIRMED_UP_TO
-        ? ` Building counts are only confirmed up to RV level ${COUNTS_CONFIRMED_UP_TO}; above that they're estimates, so check them in advanced mode.`
+        .map(({ name, tier, hasLevels }) => chip(`${tier.count}×`, name, hasLevels ? `Lv.${tier.level}` : ''))
+        .join('');
+    const moduleChips = [
+        ['Ecological Module', modules.ecological_module],
+        ['Kitchen Module', modules.kitchen_module],
+        ['Resource Detector', modules.resource_detector],
+        ['Crafting Module', modules.crafting_module],
+    ].map(([name, level]) => chip('', name, level > 0 ? `Lv.${level}` : 'not yet')).join('');
+    const notes = homeLevel > COUNTS_CONFIRMED_UP_TO
+        ? `<ul class="assume-notes">
+               <li>Building counts are confirmed up to RV level ${COUNTS_CONFIRMED_UP_TO}; above that they're estimates.</li>
+               <li>Facility levels past RV level ${COUNTS_CONFIRMED_UP_TO} haven't been checked in game yet.</li>
+           </ul>`
         : '';
-    const levels = homeLevel > COUNTS_CONFIRMED_UP_TO
-        ? ` Facility levels past RV level ${COUNTS_CONFIRMED_UP_TO} haven't been checked in game yet.`
-        : '';
-    const moduleText = `Ecological Module Lv.${modules.ecological_module}, Kitchen Module Lv.${modules.kitchen_module}, `
-        + `Resource Detector Lv.${modules.resource_detector}, Crafting Module Lv.${modules.crafting_module}`;
-    document.getElementById('simple-summary').textContent =
-        `Assumes: ${built.join(', ')}. Modules: ${moduleText}.${estimate}${levels}`;
+    document.getElementById('simple-summary').innerHTML = `
+        <p class="assume-title">Facilities</p>
+        <div class="chip-grid">${built}</div>
+        <p class="assume-title">Modules</p>
+        <div class="chip-grid">${moduleChips}</div>
+        ${notes}`;
 }
 
 function applyConfigMode() {
@@ -524,6 +535,23 @@ function getPlanInputValues() {
 // parseInt/parseFloat that fall back to `fallback` only when the input doesn't parse to a number
 // at all (blank/invalid); unlike `value || fallback`, these correctly keep a legitimate 0 (e.g.
 // "I own zero of this facility"), which `||` would silently discard since 0 is falsy in JS.
+// "quick_aromathyst" -> "Quick Aromathyst": the data uses snake_case names.
+function prettyItem(name) {
+    if (!name) return name;
+    return name.split('_').map(w => w ? w[0].toUpperCase() + w.slice(1) : w).join(' ');
+}
+
+// A plan row's reason with its item names made readable: "Used for dried_strawberries, jam; the
+// rest sells directly" -> "Used for Dried Strawberries, Jam; the rest sells directly".
+function prettyReason(reason) {
+    if (!reason) return reason;
+    return reason.replace(/^Used for ([^;]+)/, (_, list) => 'Used for ' + list.split(', ').map(prettyItem).join(', '));
+}
+
+// Keys ("Facility|item") of the shown plan's rows that rely on recipes not yet checked in game;
+// set by `displayPlan` so the facility tables can tag those rows.
+let unverifiedRowKeys = new Set();
+
 function numberOrDefault(value, fallback) {
     const parsed = parseInt(value, 10);
     return Number.isNaN(parsed) ? fallback : parsed;
@@ -598,7 +626,7 @@ function renderProductBreakdown(goalResult) {
         const wholeAmount = Math.floor(p.total_units);
         const worth = wholeAmount * p.sell_value;
         row.innerHTML = `
-            <td>${p.item_name}</td>
+            <td>${prettyItem(p.item_name)}</td>
             <td>${p.facility}</td>
             <td>${wholeAmount.toLocaleString()}</td>
             <td>${formatNumber(p.rate_per_second * multiplier)}</td>
@@ -638,7 +666,7 @@ function renderSeedsNeeded(goalResult) {
 
     tbody.innerHTML = requirements.map(r => `
         <tr>
-            <td>${r.item_name}</td>
+            <td>${prettyItem(r.item_name)}</td>
             <td>${r.facility}</td>
             <td>${r.facility_count.toLocaleString()}</td>
             <td>${r.seeds_per_plot.toLocaleString()}</td>
@@ -687,11 +715,11 @@ function facilityPlanTable(rows) {
                 </thead>
                 <tbody>${rows.map(step => `
                     <tr class="status-${step.status}">
-                        <td>${step.facility}</td>
-                        <td>${step.facility_count}</td>
-                        <td>${step.item_name || '-'}</td>
-                        <td>${aniimoLabel(step)}</td>
-                        <td>${step.reason}</td>
+                        <td data-label="Facility">${step.facility}</td>
+                        <td data-label="Count">${step.facility_count}</td>
+                        <td data-label="Producing">${step.item_name ? prettyItem(step.item_name) : '-'}${unverifiedRowKeys.has(`${step.facility}|${step.item_name}`) ? '<span class="tag unverified" title="Not yet checked in game">unverified</span>' : ''}</td>
+                        <td data-label="Aniimo">${aniimoLabel(step)}</td>
+                        <td data-label="Why">${prettyReason(step.reason)}</td>
                     </tr>
                 `).join('')}</tbody>
             </table>
@@ -714,7 +742,7 @@ function renderAniimoSummary(plan) {
             }
             const g = groups.get(key);
             g.busy += task.busy;
-            const place = `${step.facility} (${step.item_name})`;
+            const place = `${step.facility} (${prettyItem(step.item_name)})`;
             g.where.set(place, (g.where.get(place) || 0) + step.facility_count);
         });
     });
@@ -745,10 +773,10 @@ function renderAniimoSummary(plan) {
         .map(g => {
             total += g.count;
             const where = [...g.where.entries()].map(([place, n]) => `${n > 1 ? n + '× ' : ''}${place}`).join(', ');
-            return `<tr><td>${g.label}</td><td>${g.count}</td><td>${g.busy.toFixed(1)}</td><td>${where}</td></tr>`;
+            return `<tr><td data-label="Aniimo">${g.label}</td><td data-label="How many">${g.count}</td><td data-label="Busy on average">${g.busy.toFixed(1)}</td><td data-label="Where">${where}</td></tr>`;
         })
         .join('');
-    const haulingRow = `<tr><td>Hauling, any level</td><td>1+</td><td>?</td><td>Carries produce to storage. How much work this is isn't known yet; add more if produce piles up.</td></tr>`;
+    const haulingRow = `<tr><td data-label="Aniimo">Hauling, any level</td><td data-label="How many">1+</td><td data-label="Busy on average">?</td><td data-label="Where">Carries produce to storage. How much work this is isn't known yet; add more if produce piles up.</td></tr>`;
 
     let capNote = '';
     const cap = isSimpleMode() ? ANIIMO_MAX[selectedHomeLevel() - 1] : null;
@@ -1016,21 +1044,19 @@ function displayPlan(plan, scroll = true) {
 
     const explored = document.getElementById('plan-explored-hint');
     if (plan.proven_optimal === true) {
-        explored.textContent = 'Proven best plan for the game data we have: no other use of these facilities earns more.';
+        explored.innerHTML = '<span class="badge">✓ Proven best plan</span>No other use of these facilities earns more, for the game data we have.';
     } else if (plan.proven_optimal === false && plan.upper_bound > 0) {
         const gap = Math.max(0, (plan.upper_bound - plan.rate_per_second) / plan.upper_bound * 100);
         explored.textContent = `Best plan found in the time allowed; the best possible is at most ${gap.toFixed(1)}% higher.`;
     } else {
-        explored.textContent =
-            `Explored ${plan.candidates_evaluated} candidate item${plan.candidates_evaluated === 1 ? '' : 's'} across ${plan.trial_solves} trial solve${plan.trial_solves === 1 ? '' : 's'} to find this plan.`;
+        explored.textContent = 'Found with the backup planner, so it may not be the very best plan.';
     }
 
     const unverifiedEl = document.getElementById('plan-unverified');
     const unverified = plan.unverified || [];
+    unverifiedRowKeys = new Set(unverified.map(u => `${u.facility}|${u.item_name}`));
     if (unverified.length) {
-        const list = unverified.map(u => `${u.item_name} (${u.facility})`).join(', ');
-        unverifiedEl.textContent = `This plan uses ${unverified.length} recipe${unverified.length === 1 ? '' : 's'} not yet checked in game: `
-            + `${list}. If any of those numbers are off, so is this plan.`;
+        unverifiedEl.textContent = `${unverified.length} recipe${unverified.length === 1 ? '' : 's'} in this plan ${unverified.length === 1 ? "hasn't" : "haven't"} been checked in game yet (tagged below). If any of those numbers are off, so is this plan.`;
         unverifiedEl.style.display = 'block';
     } else {
         unverifiedEl.style.display = 'none';
@@ -1083,8 +1109,9 @@ async function runFindPlan() {
     btnLoading.style.display = 'inline';
     progressBar.style.display = 'block';
     progressCaption.style.display = 'block';
-    progressFill.style.width = '0%';
-    progressCaption.textContent = 'Starting...';
+    progressFill.style.width = '';
+    progressFill.classList.add('indeterminate');
+    progressCaption.textContent = 'Finding the best plan...';
 
     const runId = ++planRunId;
     plansBySetup = {};
@@ -1096,9 +1123,11 @@ async function runFindPlan() {
         // bar above for however long this takes, instead of freezing. `onTrialProgress` receives
         // the solver's own real, running trial-solve count after every trial solve; converted to
         // a fill percentage by `trialCountToPercent` below.
+        // Only the backup planner reports progress (see worker.js); the exact planner is quick.
         const bestJson = await callWorker('find_plan', JSON.stringify({ ...input, aniimo: 'best' }), (count) => {
+            progressFill.classList.remove('indeterminate');
             progressFill.style.width = `${trialCountToPercent(count)}%`;
-            progressCaption.textContent = `Trial ${count}...`;
+            progressCaption.textContent = `Backup planner, trial ${count}...`;
         });
         progressFill.style.width = '100%';
         if (runId !== planRunId) return;
@@ -1126,6 +1155,7 @@ async function runFindPlan() {
         btnLoading.style.display = 'none';
         progressBar.style.display = 'none';
         progressCaption.style.display = 'none';
+        progressFill.classList.remove('indeterminate');
     }
 }
 
@@ -1177,7 +1207,7 @@ function formatRecipeInputs(recipe) {
     if (recipe.raw_materials && recipe.raw_materials.length > 0) {
         const amounts = recipe.required_amount || [];
         return recipe.raw_materials
-            .map((mat, i) => `${amounts[i] ?? '?'}x ${mat}`)
+            .map((mat, i) => `${amounts[i] ?? '?'}× ${prettyItem(mat)}`)
             .join(', ');
     }
     if (recipe.cost && recipe.cost > 0) {
@@ -1233,7 +1263,7 @@ function renderRecipeTables(recipes) {
         const tables = facilitiesInCategory.map(f => {
             const rows = byFacility.get(f.name).map(r => `
                 <tr${r.verified === false ? ' class="unverified"' : ''}>
-                    <td>${r.name}${r.verified === false ? ' <span class="info-icon" data-tooltip="Not yet checked in game.">?</span>' : ''}</td>
+                    <td>${prettyItem(r.name)}${r.verified === false ? ' <span class="info-icon" data-tooltip="Not yet checked in game.">?</span>' : ''}</td>
                     <td>${r.facility_level}</td>
                     <td>${formatRecipeInputs(r)}</td>
                     <td>${formatRecipeYield(r)}</td>

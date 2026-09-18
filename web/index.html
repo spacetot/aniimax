@@ -23,93 +23,88 @@
     <div class="container">
 
         <main>
-            <section class="config-section">
-                <h2>Configuration</h2>
+            <section class="card config-section">
+                <div class="card-head">
+                    <h2>Your homeland</h2>
+                    <button type="button" id="clear-saved-btn" class="toggle-button small" title="Your inputs are saved in this browser automatically.">Clear saved values</button>
+                </div>
+                <p class="card-lead">Tell us what you've built, then find the best plan for it.</p>
 
-                <p class="hint">Set your facilities, and the calculator shows the fastest achievable rate and what each facility should do. No target is needed for that. Enter a goal further down once you have a plan, and it updates instantly.</p>
-
-                <p class="hint small">Your inputs are saved automatically in this browser. They'll still be here next time you open this page. <button type="button" id="clear-saved-btn" class="toggle-button">Clear saved values</button></p>
-
-                <div class="mode-switch" role="radiogroup" aria-label="Input mode">
+                <div class="tabs" role="radiogroup" aria-label="Input mode">
                     <label><input type="radio" name="config-mode" id="mode-simple" value="simple" checked> Simple</label>
                     <label><input type="radio" name="config-mode" id="mode-advanced" value="advanced"> Advanced</label>
                 </div>
 
                 <div id="simple-config">
-                    <p class="hint">Pick your RV level and the calculator assumes you've built and upgraded everything that level allows.</p>
                     <div class="input-row">
                         <div class="input-field">
                             <label for="home-level">RV level</label>
                             <select id="home-level"></select>
                         </div>
                     </div>
-                    <p class="hint small" id="simple-summary"></p>
-                    <p class="hint small"><button type="button" id="customize-btn" class="toggle-button">Customize in advanced mode</button> to change any count or level.</p>
-                </div>
-
-                <div class="config-group">
-                    <div class="input-row">
-                        <div class="input-field checkbox-field">
-                            <label>
-                                <input type="checkbox" id="prioritize-byproducts" checked>
-                                Prioritize Wood Blocks/Mineral Sand
-                            </label>
-                            <p class="hint small">Guarantee the maximum possible Wood Blocks/Mineral Sand rate first, even at the cost of coin profit. Uncheck to optimize purely for profit.</p>
-                        </div>
-                    </div>
-
+                    <p class="hint">Assumes you've built and upgraded everything your RV level allows.</p>
+                    <div id="simple-summary"></div>
+                    <p class="hint small"><button type="button" id="customize-btn" class="toggle-button">Customize in Advanced</button> to change any count or level.</p>
                 </div>
 
                 <div id="advanced-config">
-                <h3>Facilities</h3>
-                <p class="hint">Set the count and level for each facility you have.</p>
+                    <h3>Facilities</h3>
+                    <p class="hint">Set the count and level for each facility you have.</p>
 
-                <!-- Facility cards are generated dynamically by app.js from the FACILITIES config,
-                     grouped into category sections (Materials / Environment / Materials
-                     Processing), so new facilities can be added without editing this file. -->
-                <div class="facilities-container" id="facilities-grid"></div>
+                    <!-- Facility cards are generated dynamically by app.js from the FACILITIES config,
+                         grouped into category sections (Materials / Environment / Materials
+                         Processing), so new facilities can be added without editing this file. -->
+                    <div class="facilities-container" id="facilities-grid"></div>
 
-                <h3>Item Upgrade Modules</h3>
-                <p class="hint">Set the level for each upgrade module you have unlocked (0 = not unlocked).</p>
-                
-                <div class="modules-grid">
-                    <div class="module-card">
-                        <h4>Ecological Module <span class="info-icon" data-tooltip="Lv.1: quick wheat&#10;Lv.2: quick bamboo&#10;Lv.3: quick potato&#10;Lv.4: quick lemon&#10;Lv.5: quick rice&#10;Lv.6: quick maple syrup&#10;Lv.7: quick strawberry&#10;Lv.8: quick coconut">?</span></h4>
-                        <div class="input-field">
-                            <label for="ecological-module-level">Level</label>
-                            <input type="number" id="ecological-module-level" value="0" min="0" max="10">
+                    <h3>Item Upgrade Modules</h3>
+                    <p class="hint">Set the level for each upgrade module you have unlocked (0 = not unlocked).</p>
+
+                    <div class="modules-grid">
+                        <div class="module-card">
+                            <h4>Ecological Module <span class="info-icon" data-tooltip="Lv.1: quick wheat&#10;Lv.2: quick bamboo&#10;Lv.3: quick potato&#10;Lv.4: quick lemon&#10;Lv.5: quick rice&#10;Lv.6: quick maple syrup&#10;Lv.7: quick strawberry&#10;Lv.8: quick coconut">?</span></h4>
+                            <div class="input-field">
+                                <label for="ecological-module-level">Level</label>
+                                <input type="number" id="ecological-module-level" value="0" min="0" max="10">
+                            </div>
                         </div>
-                    </div>
 
-                    <div class="module-card">
-                        <h4>Kitchen Module <span class="info-icon" data-tooltip="Lv.2: premium bread&#10;Lv.3: premium potato soup&#10;Lv.4: premium sweet rice wine&#10;Lv.5: premium salted lemon&#10;Lv.6: premium jello&#10;Lv.7: premium berry chocolate coconut pudding">?</span></h4>
-                        <div class="input-field">
-                            <label for="kitchen-module-level">Level</label>
-                            <input type="number" id="kitchen-module-level" value="0" min="0" max="10">
+                        <div class="module-card">
+                            <h4>Kitchen Module <span class="info-icon" data-tooltip="Lv.2: premium bread&#10;Lv.3: premium potato soup&#10;Lv.4: premium sweet rice wine&#10;Lv.5: premium salted lemon&#10;Lv.6: premium jello&#10;Lv.7: premium berry chocolate coconut pudding">?</span></h4>
+                            <div class="input-field">
+                                <label for="kitchen-module-level">Level</label>
+                                <input type="number" id="kitchen-module-level" value="0" min="0" max="10">
+                            </div>
                         </div>
-                    </div>
 
-                    <div class="module-card">
-                        <h4>Resource Detector <span class="info-icon" data-tooltip="Lv.1: quick well water&#10;Lv.2: quick sea salt&#10;Lv.3: quick aromathyst&#10;Lv.4: quick fresh water&#10;Lv.5: quick wool&#10;Lv.6: quick deep rock spring water&#10;Lv.7: quick natural mineral spring water&#10;Lv.8: quick scales">?</span></h4>
-                        <div class="input-field">
-                            <label for="resource-detector-level">Level</label>
-                            <input type="number" id="resource-detector-level" value="0" min="0" max="10">
+                        <div class="module-card">
+                            <h4>Resource Detector <span class="info-icon" data-tooltip="Lv.1: quick well water&#10;Lv.2: quick sea salt&#10;Lv.3: quick aromathyst&#10;Lv.4: quick fresh water&#10;Lv.5: quick wool&#10;Lv.6: quick deep rock spring water&#10;Lv.7: quick natural mineral spring water&#10;Lv.8: quick scales">?</span></h4>
+                            <div class="input-field">
+                                <label for="resource-detector-level">Level</label>
+                                <input type="number" id="resource-detector-level" value="0" min="0" max="10">
+                            </div>
                         </div>
-                    </div>
 
-                    <div class="module-card">
-                        <h4>Crafting Module <span class="info-icon" data-tooltip="Lv.1: premium river-washed stones&#10;Lv.2: premium rose freshener&#10;Lv.3: advanced lemon incense&#10;Lv.4: advanced wind chime&#10;Lv.5: premium soap&#10;Lv.6: advanced gemstone dust&#10;Lv.7: premium mixed perfume">?</span></h4>
-                        <div class="input-field">
-                            <label for="crafting-module-level">Level</label>
-                            <input type="number" id="crafting-module-level" value="0" min="0" max="10">
+                        <div class="module-card">
+                            <h4>Crafting Module <span class="info-icon" data-tooltip="Lv.1: premium river-washed stones&#10;Lv.2: premium rose freshener&#10;Lv.3: advanced lemon incense&#10;Lv.4: advanced wind chime&#10;Lv.5: premium soap&#10;Lv.6: advanced gemstone dust&#10;Lv.7: premium mixed perfume">?</span></h4>
+                            <div class="input-field">
+                                <label for="crafting-module-level">Level</label>
+                                <input type="number" id="crafting-module-level" value="0" min="0" max="10">
+                            </div>
                         </div>
                     </div>
                 </div>
+
+                <div class="option-row checkbox-field">
+                    <label>
+                        <input type="checkbox" id="prioritize-byproducts" checked>
+                        Prioritize Wood Blocks and Mineral Sand
+                    </label>
+                    <span class="info-icon" data-tooltip="Make as much Wood Blocks and Mineral Sand as possible first, then as many coins as that allows. Leave unticked to go purely for coins.">?</span>
                 </div>
 
                 <button id="optimize-btn" class="optimize-btn">
-                    <span class="btn-text">Calculate Optimal Path</span>
-                    <span class="btn-loading" style="display: none;">Calculating...</span>
+                    <span class="btn-text">Find the best plan</span>
+                    <span class="btn-loading" style="display: none;">Solving...</span>
                 </button>
                 <div id="progress-bar-container" class="progress-bar-container" style="display: none;">
                     <div id="progress-bar-fill" class="progress-bar-fill"></div>
@@ -118,41 +113,29 @@
             </section>
 
             <section class="results-section" id="results-section" style="display: none;">
-                <h2>Results</h2>
-
-                <div id="error-message" class="error-message" style="display: none;"></div>
+                <div id="error-message" class="card error-message" style="display: none;"></div>
 
                 <div id="results-content">
-                    <div class="result-summary">
-                        <div class="summary-grid">
-                            <div class="summary-item">
-                                <span class="summary-label">Your Rate</span>
-                                <span class="summary-value" id="plan-rate">-</span>
-                                <select id="rate-unit" class="rate-unit-select">
-                                    <option value="second">per second</option>
-                                    <option value="hour">per hour</option>
-                                    <option value="day">per day</option>
-                                </select>
-                            </div>
+                    <div class="card rate-card">
+                        <span class="summary-label">Your rate</span>
+                        <div class="rate-line">
+                            <span class="summary-value" id="plan-rate">-</span>
+                            <select id="rate-unit" class="rate-unit-select" aria-label="Rate unit">
+                                <option value="second">per second</option>
+                                <option value="hour">per hour</option>
+                                <option value="day">per day</option>
+                            </select>
                         </div>
-                        <p class="hint small" id="plan-explored-hint"></p>
-                        <p class="hint small" id="plan-unverified" style="display: none;"></p>
+                        <p class="plan-proof" id="plan-explored-hint"></p>
+                        <p class="plan-unverified" id="plan-unverified" style="display: none;"></p>
                     </div>
 
-                    <div class="production-steps">
-                        <h3>Aniimo</h3>
-                        <div class="mode-switch" role="radiogroup" aria-label="Aniimo setup">
-                            <label><input type="radio" name="aniimo-setup" id="aniimo-best" value="best" checked> Best</label>
-                            <label><input type="radio" name="aniimo-setup" id="aniimo-minimum" value="minimum"> Minimum</label>
-                        </div>
-                        <p class="hint small"><strong>Best</strong> puts a level-3 Aniimo with the facility's personality on every job, the fastest possible. <strong>Minimum</strong> uses the lowest ability level each recipe accepts, with no personality bonus: slower, but it shows what you need at the very least. Aniimo move between any jobs they can do, so the counts cover the work on average rather than one per facility; Farmland and Woodland jobs are included. Facilities with a resident Aniimo (Sandcastle, Dewy House and the like) need one each. Each recipe's minimum ability level and the Farmland/Woodland jobs haven't been checked in game yet.</p>
-                        <p class="hint small" id="aniimo-pending" style="display: none;">Still working out the Minimum setup...</p>
-                        <div id="aniimo-summary"></div>
-                    </div>
-
-                    <div class="production-steps">
-                        <h3>What Each Facility Should Do</h3>
-                        <p class="hint small">Each row is a single product; a facility split between multiple items gets one row per item. Crops that need a growing environment (Cool/Warm/Freeze/Scorching/Adequate) are grouped by which environment they use, showing which Heat Furnace/Cooling Unit/Sunlamp configuration covers them. Everything else is grouped the same way as the Facilities section above.</p>
+                    <div class="card production-steps">
+                        <h2>What each facility should do</h2>
+                        <details class="explain">
+                            <summary>How to read this</summary>
+                            <p>Each row is one product; a facility split between several products gets a row for each. Crops that need a growing environment are grouped by the Heat Furnace, Cooling Unit or Sunlamp setting that covers them, with its layout. Everything else is grouped like the facility list.</p>
+                        </details>
                         <!-- Populated by app.js's renderFacilityPlan(): one section per
                              environment mode in use (Cool/Warm/Freeze/Scorching/Adequate) first,
                              then one table per facility category (Materials / Environment /
@@ -160,9 +143,26 @@
                         <div id="facility-plan-container" class="facilities-container"></div>
                     </div>
 
-                    <div class="production-steps" id="goal-section">
-                        <h3>Set a Goal</h3>
-                        <p class="hint small">Updates instantly from the plan above. No need to hit Calculate again.</p>
+                    <div class="card production-steps">
+                        <div class="card-head">
+                            <h2>Aniimo team</h2>
+                            <div class="tabs compact" role="radiogroup" aria-label="Aniimo setup">
+                                <label><input type="radio" name="aniimo-setup" id="aniimo-best" value="best" checked> Best</label>
+                                <label><input type="radio" name="aniimo-setup" id="aniimo-minimum" value="minimum"> Minimum</label>
+                            </div>
+                        </div>
+                        <details class="explain">
+                            <summary>How the team is worked out</summary>
+                            <p><strong>Best</strong> puts a level-3 Aniimo with the facility's personality on every job, the fastest possible. <strong>Minimum</strong> uses the lowest ability level each recipe accepts, with no personality bonus: slower, but it's what you need at the very least.</p>
+                            <p>Aniimo move between any jobs they can do, so the counts cover the work on average rather than one per facility; Farmland and Woodland jobs are included. Facilities with a resident Aniimo (Sandcastle, Dewy House and the like) need one each. Each recipe's minimum ability level and the Farmland/Woodland jobs haven't been checked in game yet.</p>
+                        </details>
+                        <p class="hint small" id="aniimo-pending" style="display: none;">Still working out the Minimum setup...</p>
+                        <div id="aniimo-summary"></div>
+                    </div>
+
+                    <div class="card production-steps" id="goal-section">
+                        <h2>Set a goal</h2>
+                        <p class="hint">Updates instantly from the plan above.</p>
                         <div class="config-group">
                             <div class="input-row">
                                 <div class="input-field">
@@ -179,7 +179,7 @@
                         <div class="result-summary">
                             <div class="summary-grid">
                                 <div class="summary-item">
-                                    <span class="summary-label">Total Time</span>
+                                    <span class="summary-label">Total time</span>
                                     <span class="summary-value" id="total-time">-</span>
                                 </div>
                                 <div class="summary-item">
@@ -190,7 +190,7 @@
                         </div>
 
                         <div class="production-steps" id="product-breakdown-section" style="display: none;">
-                            <h3>Product Breakdown</h3>
+                            <h3>Product breakdown</h3>
                             <div class="table-wrapper">
                                 <table id="product-breakdown-table">
                                     <thead>
@@ -208,7 +208,7 @@
                         </div>
 
                         <div class="production-steps" id="seeds-needed-section" style="display: none;">
-                            <h3>Seeds Needed</h3>
+                            <h3>Seeds needed</h3>
                             <div class="table-wrapper">
                                 <table id="seeds-needed-table">
                                     <thead>
@@ -299,30 +299,22 @@
                 <button class="close-button" onclick="closeHelp()">&times;</button>
             </div>
             <div class="modal-body">
-                <h3>1. Choose a Priority</h3>
-                <p>The calculator maximizes Coins. Wood Blocks and Mineral Sand come as a byproduct of Woodland and Mine items regardless, and the "Prioritize Wood Blocks/Mineral Sand" checkbox can guarantee their maximum possible rate even at the cost of some Coin profit.</p>
+                <h3>1. Tell it what you've built</h3>
+                <p><strong>Simple</strong>: pick your RV level, and the calculator assumes you've built and upgraded everything that level allows. <strong>Advanced</strong>: set the count and level of every facility and upgrade module yourself. "Customize in Advanced" copies the Simple setup over as a starting point.</p>
 
-                <h3>2. Configure Facilities</h3>
-                <p>Set the count and level of each facility you have unlocked in Aniimo Homeland.</p>
+                <h3>2. Find the best plan</h3>
+                <p>Click "Find the best plan" to see your best rate and what each facility should make. Ticking "Prioritize Wood Blocks and Mineral Sand" makes as much of those as possible first, then as many coins as that allows.</p>
 
-                <h3>3. Set Upgrade Modules</h3>
-                <p>Enter the level of each upgrade module you've unlocked (0 = not unlocked).</p>
+                <h3>3. Set a goal (optional)</h3>
+                <p>Enter a target amount and your current balance to see how long it will take. This updates instantly as you type.</p>
 
-                <h3>4. Calculate</h3>
-                <p>Click "Calculate Optimal Path" to see your best achievable rate and what each facility should produce. No target amount is needed for this step.</p>
-
-                <h3>5. Set a Goal (Optional)</h3>
-                <p>Once you have a plan, enter a target amount and your current balance further down to see how long it will take. This updates instantly as you type, with no need to recalculate the plan.</p>
-
-                <h3>Understanding Results</h3>
+                <h3>Understanding the results</h3>
                 <ul>
-                    <li><strong>Your Rate</strong>: The best steady-state rate of your chosen target achievable with your current facilities, viewable per second, hour, or day</li>
-                    <li><strong>What Each Facility Should Do</strong>: Which item to dedicate each owned facility to, running in parallel</li>
-                    <li><strong>Total Time / Amount Produced</strong>: How long your goal takes, and the item-level breakdown of what gets made along the way</li>
+                    <li><strong>Your rate</strong>: the best steady rate your facilities can reach, per second, hour or day. "Proven best plan" means no other use of your facilities earns more, for the game data we have.</li>
+                    <li><strong>What each facility should do</strong>: what to set each facility to, all running at once. Recipes tagged "unverified" haven't been checked in game yet.</li>
+                    <li><strong>Aniimo team</strong>: which Aniimo to keep on your homeland, for the fastest setup (Best) or the least you can get by with (Minimum).</li>
+                    <li><strong>Total time / amount produced</strong>: how long your goal takes, and what gets made along the way.</li>
                 </ul>
-
-                <h3>How It Decides</h3>
-                <p>Every owned facility is dedicated to its own best item for the chosen target, all running simultaneously. Different facility types don't compete for the same time slot, so using more of them always finishes faster. The reported rate is the fastest achievable given your current facility counts and levels.</p>
             </div>
         </div>
     </div>
