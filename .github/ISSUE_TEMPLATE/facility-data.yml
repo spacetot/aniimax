@@ -75,19 +75,11 @@ body:
     attributes:
       label: Items
       description: |
-        One row per item. Fill in what applies and leave the rest blank:
-        - **Level**: facility level that unlocks the item
-        - **Ingredients**: for crafted items, each ingredient with its amount (e.g. `2 milled rice, 5 well water`)
-        - **Time or workload**: grow time for crops and trees (e.g. `40 min`), workload for everything else
-        - **Yield**: how many you get per batch
-        - **Value**: sell price
-        - **Seed cost**: crops and trees only
-        - **Module**: module and level needed, if any (e.g. `Kitchen 2`)
-        - **Environment**: Warm, Scorching, Cool, Freeze or Adequate, if needed
-      value: |
-        | Item | Level | Ingredients | Time or workload | Yield | Value | Seed cost | Module | Environment |
-        |---|---|---|---|---|---|---|---|---|
-        |  |  |  |  |  |  |  |  |  |
+        One item per line, with whatever you can see: its level, what goes into it, the workload (or grow time for crops and trees), how many it makes, and what it sells for. Mention a module or environment if it needs one. Pasting a table from a spreadsheet works too.
+      placeholder: |
+        Plain Rice Porridge: level 1, 2 milled rice + 5 well water, workload 108, makes 1, sells for 660
+        Rose Concentrate: level 2, 12 rose + 8 well water, workload 135, makes 1, sells for 770
+        Strawberry: level 5, grows in 40 min, makes 8, sells for 61, seed costs 32, needs Cool
     validations:
       required: true
 
@@ -106,11 +98,3 @@ body:
       description: Optional. Drag and drop screenshots of the in-game recipe or item screens here.
     validations:
       required: false
-
-  - type: checkboxes
-    id: confirm
-    attributes:
-      label: Before submitting
-      options:
-        - label: I copied these values from the game, not from a guide or wiki.
-          required: true
