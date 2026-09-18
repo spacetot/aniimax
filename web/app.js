@@ -700,8 +700,7 @@ const ABILITIES = [
 ];
 const ABILITY_BY_NAME = new Map(ABILITIES.map(a => [a.name, a]));
 
-// The ability each environment building's Aniimo needs, going by the abilities' in-game
-// descriptions (Fire supplies heat, Ice cools, Light illuminates); not yet checked in game.
+// The ability each environment building's Aniimo needs (confirmed in game).
 const ENVIRONMENT_BUILDING_ABILITY = {
     'Heat Furnace': 'Fire',
     'Cooling Unit': 'Ice',
@@ -781,14 +780,14 @@ function renderAniimoSummary(plan) {
             g.where.set(place, (g.where.get(place) || 0) + step.facility_count);
         });
     });
-    // Environment buildings in use each keep an Aniimo busy. Which ability and level each needs
-    // hasn't been checked in game yet; these follow the abilities' own descriptions.
+    // Environment buildings in use each keep an Aniimo busy (abilities confirmed in game; whether
+    // level or personality matters isn't known yet, so any level is shown).
     (plan.environment_assignments || []).forEach(a => {
         const ability = ENVIRONMENT_BUILDING_ABILITY[a.building];
         if (!ability || !a.units) return;
-        const key = `${ability} Lv.1 (environment)`;
+        const key = `${ability} (environment)`;
         if (!groups.has(key)) {
-            groups.set(key, { label: `${ability} Lv.1`, ability, level: 1, bonus: false, busy: 0, where: new Map(), unconfirmed: true });
+            groups.set(key, { label: `${ability} any level`, ability, level: 1, bonus: false, busy: 0, where: new Map(), environment: true });
         }
         const g = groups.get(key);
         g.busy += a.units;
@@ -808,7 +807,7 @@ function renderAniimoSummary(plan) {
     const sorted = [...groups.values()].sort((a, b) => b.level - a.level || Number(b.bonus) - Number(a.bonus) || a.label.localeCompare(b.label));
     const kept = [];
     sorted.forEach(g => {
-        const host = g.bonus || g.unconfirmed ? null : kept.find(k => k.ability === g.ability && k.level >= g.level && k.spare >= g.busy - 1e-6);
+        const host = g.bonus || g.environment ? null : kept.find(k => k.ability === g.ability && k.level >= g.level && k.spare >= g.busy - 1e-6);
         if (host) {
             host.spare -= g.busy;
             host.busy += g.busy;
@@ -825,9 +824,8 @@ function renderAniimoSummary(plan) {
         .map(g => {
             total += g.count;
             const where = [...g.where.entries()].map(([place, n]) => `${n > 1 ? n + '× ' : ''}${place}`).join(', ');
-            const [, rest] = g.label.split(/ (?=Lv\.)/);
-            const unconfirmed = g.unconfirmed ? '<span class="tag unverified" title="Which ability and level this building needs has not been checked in game yet">unverified</span>' : '';
-            return `<tr><td data-label="Aniimo">${abilityTag(g.ability)} ${rest || ''}</td><td data-label="How many">${g.count}</td><td data-label="Busy on average">${g.busy.toFixed(1)}</td><td data-label="Where">${where}${unconfirmed}</td></tr>`;
+            const rest = g.label.slice(g.ability.length).trim();
+            return `<tr><td data-label="Aniimo">${abilityTag(g.ability)} ${rest}</td><td data-label="How many">${g.count}</td><td data-label="Busy on average">${g.busy.toFixed(1)}</td><td data-label="Where">${where}</td></tr>`;
         })
         .join('');
     const haulingRow = `<tr><td data-label="Aniimo">${abilityTag('Hauling')} any level</td><td data-label="How many">1+</td><td data-label="Busy on average">?</td><td data-label="Where">Carries produce to storage. How much work this is isn't known yet; add more if produce piles up.</td></tr>`;
