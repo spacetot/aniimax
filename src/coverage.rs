@@ -503,6 +503,119 @@ pub fn solve_building_packing<'a>(
     (mode_counts, result_placements, layouts)
 }
 
+/// One way a single environment building can cover facilities: how many of each facility type
+/// (in the order of the `types` it was computed for) fit in its coverage, and where they go.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CoverageOption {
+    pub counts: Vec<u32>,
+    pub layout: Vec<Placement>,
+}
+
+/// The most facilities of `types[target]` one building's coverage can hold while also holding at
+/// least `minimums[t]` of every other type, with the layout; `None` if the minimums don't fit.
+/// Other types get a tiny weight so the layout is filled out rather than just meeting the minimums.
+fn most_with_minimums(types: &[&str], minimums: &[u32], target: usize) -> Option<CoverageOption> {
+    let mut problem = microlp::Problem::new(microlp::OptimizationDirection::Maximize);
+    let mut vars: Vec<(Placement, microlp::Variable)> = Vec::new();
+    let mut type_of: Vec<usize> = Vec::new();
+    for (t, &facility) in types.iter().enumerate() {
+        let size = facility_footprint(facility)?;
+        let weight = if t == target { 1.0 } else { 1e-3 };
+        for placement in candidate_placements(facility, size) {
+            vars.push((placement, problem.add_binary_var(weight)));
+            type_of.push(t);
+        }
+    }
+    add_cell_conflict_constraints(&mut problem, &vars, 1);
+    for (t, &minimum) in minimums.iter().enumerate() {
+        if t == target || minimum == 0 {
+            continue;
+        }
+        let terms: Vec<(microlp::Variable, f64)> =
+            vars.iter().zip(&type_of).filter(|(_, &ty)| ty == t).map(|((_, v), _)| (*v, 1.0)).collect();
+        problem.add_constraint(&terms, microlp::ComparisonOp::Ge, minimum as f64);
+    }
+    problem.set_time_limit(std::time::Duration::from_secs(5));
+    let solution = problem.solve().ok()?;
+    let chosen: Vec<usize> = (0..vars.len()).filter(|&i| solution[vars[i].1] > 0.5).collect();
+    if vars.iter().any(|(_, v)| (1e-6..=1.0 - 1e-6).contains(&solution[*v])) {
+        return None;
+    }
+    let mut counts = vec![0u32; types.len()];
+    for &i in &chosen {
+        counts[type_of[i]] += 1;
+    }
+    if counts.iter().zip(minimums).enumerate().any(|(t, (c, m))| t != target && c < m) {
+        return None;
+    }
+    Some(CoverageOption { counts, layout: chosen.into_iter().map(|i| vars[i].0.clone()).collect() })
+}
+
+/// Tries every minimum count of `types[position]` from 0 up until it no longer fits, recursing into
+/// the next position; at the last type, records the most of it that fits. Returns whether the
+/// minimums fixed so far fit at all.
+fn walk_minimums(types: &[&str], minimums: &mut Vec<u32>, position: usize, found: &mut Vec<CoverageOption>) -> bool {
+    let last = types.len() - 1;
+    if position == last {
+        return match most_with_minimums(types, minimums, last) {
+            Some(option) => {
+                found.push(option);
+                true
+            }
+            None => false,
+        };
+    }
+    let mut minimum = 0;
+    loop {
+        minimums[position] = minimum;
+        if !walk_minimums(types, minimums, position + 1, found) {
+            break;
+        }
+        minimum += 1;
+    }
+    minimums[position] = 0;
+    minimum > 0
+}
+
+thread_local! {
+    static OPTION_CACHE: std::cell::RefCell<HashMap<Vec<String>, Vec<CoverageOption>>> =
+        std::cell::RefCell::new(HashMap::new());
+}
+
+/// Every undominated way one environment building can cover a mix of `types` (e.g. "16 Farmland"
+/// or "2 Woodland and 8 Farmland"): no option covers at least as many of every type as another
+/// and more of one. The geometry never changes, so results are cached per type list.
+///
+/// Walks every combination of minimum counts for all but the last type and asks the packing ILP
+/// for the most of the last type that still fits, so types should be ordered largest footprint
+/// first (the last type has the most possible counts, and is the one never enumerated).
+pub fn single_building_options(types: &[&str]) -> Vec<CoverageOption> {
+    let key: Vec<String> = types.iter().map(|t| t.to_string()).collect();
+    if let Some(hit) = OPTION_CACHE.with(|cache| cache.borrow().get(&key).cloned()) {
+        return hit;
+    }
+    let mut found: Vec<CoverageOption> = Vec::new();
+    if !types.is_empty() {
+        let mut minimums = vec![0u32; types.len()];
+        walk_minimums(types, &mut minimums, 0, &mut found);
+    }
+    let undominated: Vec<CoverageOption> = found
+        .iter()
+        .filter(|a| {
+            !found.iter().any(|b| b.counts != a.counts && b.counts.iter().zip(&a.counts).all(|(x, y)| x >= y))
+        })
+        .cloned()
+        .collect();
+    let mut unique: Vec<CoverageOption> = Vec::new();
+    for option in undominated {
+        if !unique.iter().any(|u| u.counts == option.counts) {
+            unique.push(option);
+        }
+    }
+    OPTION_CACHE.with(|cache| cache.borrow_mut().insert(key, unique.clone()));
+    unique
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

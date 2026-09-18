@@ -16,6 +16,7 @@ Updated for the full release, with a joint LP-based facility-allocation engine f
 - **Simple or Advanced Setup**: Simple mode only asks for your RV level and assumes everything that level allows is built and upgraded; advanced mode sets every facility's count and level (and can start from the simple-mode setup)
 - **Live Production Plan**: Set your facilities to get the best achievable rate and what every facility should produce; no target amount needed
 - **Goal Timing**: Add a target amount afterward to see how long it'll take; updates instantly as you type, no re-solving
+- **Proven Best Plans**: The web app solves the whole problem exactly (every recipe, whole plots and machines, and environment building layouts together) with the [HiGHS](https://highs.dev) solver, and says when a plan is proven to be the best possible for your facilities
 - **Joint Facility Allocation**: Solves for every item and every facility at once, so shared resources (e.g. two recipes both wanting the same Farmland soybean supply) are split correctly instead of double-counted
 - **Whole-Unit Realism**: Growers are rounded to whole plots, processors are dedicated to one recipe each, matching how the game actually works, never a fractional or time-shared facility
 - **Byproduct Priority**: Optionally guarantee the maximum Wood Blocks/Mineral Sand rate first, even at some cost to Coins
@@ -207,11 +208,23 @@ tofu                       0.3633          N/A      40m 27s
 
 ## How the Optimization Works
 
-The web app and the CLI/library use two different approaches to the same underlying problem.
+The web app and the CLI/library use different approaches to the same underlying problem.
 
-### Web App: Joint Facility Allocation
+### Web App: Exact Planner
 
-The web app (`find_plan`, backed by `find_production_plan`) solves a harder version of the problem than "what's the single best item": it solves for what *every* owned facility should be doing at once, including facilities that multiple recipes want to share.
+The web app builds the whole problem as one mixed-integer program (`src/exact.rs`) and solves it with [HiGHS](https://highs.dev), compiled to WebAssembly and run in the page's worker (`web/vendor/highs`, MIT license):
+
+- **Recipes and units.** Every available recipe gets a rate (batches/sec) and a whole number of units set to it: plots for a crop, machines for a processed item. A unit makes one thing and is left running, so its rate is at most `units / time per batch`.
+- **Item balances.** Everything made covers what other recipes use plus what's sold. A quick variant makes the same item as the regular one, and any leftover sells.
+- **Facilities.** Each facility's units add up to at most what's owned, counting only units at a high enough level for each recipe.
+- **Growing environments.** Each Heat Furnace, Cooling Unit and Sunlamp runs one mode and one coverage mix, from every undominated way one building can cover Farmland, Woodland and the rest (worked out once by exact packing); a crop needing an environment needs its plots covered.
+- **Objective.** Coins/sec from everything sold, minus seed costs. With byproducts prioritized, the most of each byproduct is found first and the plan must keep making that much.
+
+HiGHS either proves its plan optimal, which the page reports, or stops at a time limit and reports how far from optimal it could be. Before a plan is shown, the whole-unit counts are re-solved with `microlp` and every limit is re-checked independently (`check_plan`); if anything fails, the page falls back to the heuristic planner below.
+
+### Web App Fallback: Joint Facility Allocation
+
+The heuristic planner (`find_plan`, backed by `find_production_plan`) solves a harder version of the problem than "what's the single best item": it solves for what *every* owned facility should be doing at once, including facilities that multiple recipes want to share.
 
 **1. Profit per item.** For every item, net profit per batch, plus its utilization (batches/sec needed) at every facility touched anywhere in its ingredient chain, not just its own facility, but every intermediate processing step too.
 
@@ -618,7 +631,9 @@ src/
   main.rs            - CLI entry point
   models.rs          - Data structures
   data.rs            - CSV loading functions
-  optimizer.rs       - Optimization algorithms (both the web app's LP solve and the CLI's greedy path)
+  exact.rs           - Exact planner: the web app's mixed-integer model, and its checks
+  coverage.rs        - Environment building coverage geometry and packing
+  optimizer.rs       - Heuristic planner (the web app's fallback) and the CLI's greedy path
   display.rs         - CLI output formatting
   wasm.rs            - WebAssembly bindings
 data/
@@ -628,6 +643,8 @@ web/
   facility-config.js - Shared facility list/categories
   app.js             - Page logic, including the facility recipe reference modal
   style.css          - Styling
+  worker.js          - Web Worker running the wasm module and HiGHS
+  vendor/highs/      - HiGHS solver compiled to WebAssembly (MIT license)
   pkg/               - Built WASM module (generated)
 tests/
   *.rs               - Integration tests

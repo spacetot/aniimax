@@ -1011,8 +1011,16 @@ function displayPlan(plan, scroll = true) {
     updateRateDisplay();
     updateCurrencyLabels(plan.currency);
 
-    document.getElementById('plan-explored-hint').textContent =
-        `Explored ${plan.candidates_evaluated} candidate item${plan.candidates_evaluated === 1 ? '' : 's'} across ${plan.trial_solves} trial solve${plan.trial_solves === 1 ? '' : 's'} to find this plan.`;
+    const explored = document.getElementById('plan-explored-hint');
+    if (plan.proven_optimal === true) {
+        explored.textContent = 'Proven best plan: no other use of these facilities earns more.';
+    } else if (plan.proven_optimal === false && plan.upper_bound > 0) {
+        const gap = Math.max(0, (plan.upper_bound - plan.rate_per_second) / plan.upper_bound * 100);
+        explored.textContent = `Best plan found in the time allowed; the best possible is at most ${gap.toFixed(1)}% higher.`;
+    } else {
+        explored.textContent =
+            `Explored ${plan.candidates_evaluated} candidate item${plan.candidates_evaluated === 1 ? '' : 's'} across ${plan.trial_solves} trial solve${plan.trial_solves === 1 ? '' : 's'} to find this plan.`;
+    }
 
     renderFacilityPlan(plan);
     renderAniimoSummary(plan);

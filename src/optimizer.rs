@@ -1878,7 +1878,7 @@ pub fn find_self_sufficient_path(
 /// `ProductionEfficiency::startup_time`, which this does NOT reuse; that field divides
 /// processing time by facility count, which is right for steady-state throughput but wrong for
 /// "time until the first batch exists", the thing this function needs).
-fn item_lead_time(name: &str, item_map: &HashMap<&str, &ProductionItem>, depth: u32) -> f64 {
+pub(crate) fn item_lead_time(name: &str, item_map: &HashMap<&str, &ProductionItem>, depth: u32) -> f64 {
     if depth > 8 {
         return 0.0; // guard against unexpected circular references
     }

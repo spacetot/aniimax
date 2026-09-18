@@ -256,6 +256,9 @@
                 <button class="close-button" onclick="closeMath()">&times;</button>
             </div>
             <div class="modal-body">
+                <h3>The Exact Planner</h3>
+                <p>The whole problem is solved at once as a mixed-integer program: every recipe gets a rate and a whole number of plots or machines set to it, everything made must cover what other recipes use plus what's sold, each facility can't use more units than you own (at a high enough level for each recipe), and each environment building runs one mode covering one mix of plots. The objective is coins per second from everything sold, minus seed costs. The <a href="https://highs.dev" target="_blank" rel="noopener">HiGHS</a> solver either proves its plan is the best possible, which the results say, or reports how close it got. Every plan is re-checked independently before it's shown; if the exact planner can't run, the steps below make the plan instead.</p>
+
                 <h3>1. Profit per Item</h3>
                 <p>For every item, we compute net profit per batch and the time to make one, tracing its full ingredient chain back to whatever facilities produce the raw materials.</p>
                 <div class="math-block">\[ \text{profit}_{\text{batch}} = (\text{yield} \times \text{sell_price}) - \text{raw_cost} \]</div>

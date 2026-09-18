@@ -69,6 +69,7 @@
 pub mod coverage;
 pub mod data;
 pub mod display;
+pub mod exact;
 pub mod models;
 pub mod optimizer;
 pub mod wasm;

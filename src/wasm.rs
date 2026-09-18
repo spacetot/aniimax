@@ -1026,6 +1026,12 @@ pub struct JsProductionPlan {
     pub candidates_evaluated: u32,
     /// See `crate::models::ProductionPlan::trial_solves`.
     pub trial_solves: u32,
+    /// Set when the exact planner made this plan: whether it's proven to be the best possible.
+    #[serde(default)]
+    pub proven_optimal: Option<bool>,
+    /// Set when the exact planner made this plan: the most any plan could earn.
+    #[serde(default)]
+    pub upper_bound: Option<f64>,
 }
 
 fn empty_production_plan(success: bool, error: Option<String>) -> JsProductionPlan {
@@ -1040,6 +1046,8 @@ fn empty_production_plan(success: bool, error: Option<String>) -> JsProductionPl
         environment_assignments: vec![],
         candidates_evaluated: 0,
         trial_solves: 0,
+        proven_optimal: None,
+        upper_bound: None,
     }
 }
 
@@ -1074,33 +1082,10 @@ impl JsProductionPlan {
 /// doesn't block anything else from rendering.
 #[wasm_bindgen]
 pub fn find_plan(input_json: &str, on_progress: Option<js_sys::Function>) -> String {
-    let input: JsPlanInput = match serde_json::from_str(input_json) {
-        Ok(i) => i,
-        Err(e) => {
-            return serde_json::to_string(&empty_production_plan(
-                false,
-                Some(format!("Invalid input: {}", e)),
-            ))
-            .unwrap_or_default();
-        }
+    let prepared = match PreparedInput::from_json(input_json) {
+        Ok(p) => p,
+        Err(error) => return error,
     };
-
-    let facility_counts = input.facility_counts();
-    let module_levels = ModuleLevels {
-        ecological_module: input.modules.ecological_module,
-        kitchen_module: input.modules.kitchen_module,
-        resource_detector: input.modules.resource_detector,
-        crafting_module: input.modules.crafting_module,
-    };
-
-    let mut items = get_embedded_items();
-    let setup = input.aniimo.as_deref().and_then(aniimo_setup_from);
-    let requirements = embedded_aniimo_requirements();
-    let grower_steps = embedded_grower_steps();
-    match setup {
-        Some(setup) => requirements.apply(setup, &mut items),
-        None => workers_from(&input.workers).apply(&mut items),
-    }
 
     // `js_sys::Function::call1` takes `&JsValue` for both the `this` receiver and the argument;
     // errors (e.g. the JS callback itself throwing) are deliberately swallowed with `let _ =`,
@@ -1113,59 +1098,199 @@ pub fn find_plan(input_json: &str, on_progress: Option<js_sys::Function>) -> Str
     let report_ref: Option<&dyn Fn(u32)> = report.as_deref();
 
     match find_production_plan_with_progress(
-        &items,
-        &input.currency,
-        &facility_counts,
-        &module_levels,
-        input.prioritize_byproducts,
+        &prepared.items,
+        &prepared.input.currency,
+        &prepared.facility_counts,
+        &prepared.module_levels,
+        prepared.input.prioritize_byproducts,
         report_ref,
     ) {
-        Some(plan) => {
-            let coin_items = plan
-                .coin_items
-                .into_iter()
-                .map(|step| {
-                    let aniimo = match (setup, &step.item_name) {
-                        (Some(setup), Some(item)) if step.status == crate::models::PlanStepStatus::Producing => {
-                            requirements.get(item).map(|(ability, _)| {
-                                let worker = requirements.worker_for(item, setup);
-                                JsAniimo {
-                                    ability: ability.to_string(),
-                                    level: worker.suitability,
-                                    personality_bonus: worker.personality_bonus,
-                                }
-                            })
-                        }
-                        _ => None,
-                    };
-                    let aniimo_tasks = setup
-                        .map(|setup| aniimo_tasks_for(&step, setup, &requirements, &grower_steps))
-                        .unwrap_or_default();
-                    JsPlanStep { aniimo, aniimo_tasks, ..step.into() }
-                })
-                .collect();
-            let result = JsProductionPlan {
-                success: true,
-                error: None,
-                currency: plan.currency,
-                rate_per_second: plan.rate_per_second,
-                coin_items,
-                income_streams: plan.income_streams.into_iter().map(Into::into).collect(),
-                byproduct_rates: plan.byproduct_rates,
-                environment_assignments: plan.environment_assignments.into_iter().map(Into::into).collect(),
-                candidates_evaluated: plan.candidates_evaluated,
-                trial_solves: plan.trial_solves,
-            };
-            serde_json::to_string(&result).unwrap_or_default()
+        Some(plan) => serde_json::to_string(&prepared.to_js(plan, None)).unwrap_or_default(),
+        None => no_plan(),
+    }
+}
+
+/// With "prioritize byproducts" on, the exact planner first finds the most of each byproduct the
+/// facilities can make: one model per byproduct, `[{"resource", "lp", "variables"}]` (see
+/// [`exact_problem`] for the format). The caller solves each and passes
+/// `[[resource, most per second], ...]` to [`exact_problem`] and [`exact_plan`] as the floors.
+/// Empty when byproducts aren't prioritized.
+#[wasm_bindgen]
+pub fn exact_byproduct_problems(input_json: &str) -> String {
+    let Ok(prepared) = PreparedInput::from_json(input_json) else { return "[]".to_string() };
+    if !prepared.input.prioritize_byproducts || prepared.input.currency != "coins" {
+        return "[]".to_string();
+    }
+    let problems: Vec<serde_json::Value> = crate::exact::byproducts(&prepared.items)
+        .iter()
+        .map(|resource| {
+            let (lp, variables) = crate::exact::write_lp(
+                &prepared.items,
+                &prepared.input.currency,
+                &prepared.facility_counts,
+                &prepared.module_levels,
+                crate::exact::Goal::MostOf(resource),
+            );
+            serde_json::json!({ "resource": resource, "lp": lp, "variables": variables })
+        })
+        .collect();
+    serde_json::Value::Array(problems).to_string()
+}
+
+/// The exact planner's model for this input (see [`crate::exact`]), for the caller to solve with
+/// HiGHS and hand back to [`exact_plan`]: `{"lp": <CPLEX LP text>, "variables": <count>}`, where
+/// the variables are `x0` up to `x<count - 1>`. `floors_json` is `[[byproduct, per second], ...]`
+/// (see [`exact_byproduct_problems`]; `[]` if byproducts aren't prioritized). `lp` is empty when
+/// the exact planner doesn't cover the input (a byproduct as the currency), so the caller uses
+/// [`find_plan`] instead.
+#[wasm_bindgen]
+pub fn exact_problem(input_json: &str, floors_json: &str) -> String {
+    let floors: Vec<(String, f64)> = serde_json::from_str(floors_json).unwrap_or_default();
+    let lp = match PreparedInput::from_json(input_json) {
+        Ok(prepared) if prepared.input.currency == "coins" => crate::exact::write_lp(
+            &prepared.items,
+            &prepared.input.currency,
+            &prepared.facility_counts,
+            &prepared.module_levels,
+            crate::exact::Goal::Earn { floors: &floors },
+        ),
+        _ => (String::new(), 0),
+    };
+    serde_json::json!({ "lp": lp.0, "variables": lp.1 }).to_string()
+}
+
+/// The solver's answer to [`exact_problem`]'s model.
+#[derive(Debug, Clone, Deserialize)]
+struct JsSolverResult {
+    /// Every variable's value, in the model's `x0`, `x1`, ... order.
+    values: Vec<f64>,
+    /// Whether the solver proved the answer optimal.
+    proven: bool,
+    /// The solver's best bound on what any plan could earn.
+    bound: f64,
+}
+
+/// Turns HiGHS's solution of [`exact_problem`]'s model into the same result [`find_plan`]
+/// returns, plus whether it's proven optimal.
+#[wasm_bindgen]
+pub fn exact_plan(input_json: &str, floors_json: &str, solution_json: &str) -> String {
+    let prepared = match PreparedInput::from_json(input_json) {
+        Ok(p) => p,
+        Err(error) => return error,
+    };
+    let floors: Vec<(String, f64)> = serde_json::from_str(floors_json).unwrap_or_default();
+    let Ok(result) = serde_json::from_str::<JsSolverResult>(solution_json) else { return no_plan() };
+    let currency = prepared.input.currency.clone();
+    let Some(exact) = crate::exact::plan_from_values(
+        &prepared.items,
+        &currency,
+        &prepared.facility_counts,
+        &prepared.module_levels,
+        &floors,
+        &result.values,
+        result.proven,
+        result.bound,
+    ) else {
+        return no_plan();
+    };
+    if exact.rate_per_second <= 0.0 {
+        return no_plan();
+    }
+    // Independent re-check of every limit before trusting the plan; the caller falls back to the
+    // heuristic planner if this ever fails.
+    if let Err(problem) = crate::exact::check_plan(&exact, &prepared.items, &currency, &prepared.facility_counts, &prepared.module_levels) {
+        return serde_json::to_string(&empty_production_plan(false, Some(format!("Exact plan failed its check: {problem}"))))
+            .unwrap_or_default();
+    }
+    let proof = (exact.proven_optimal, exact.upper_bound);
+    let plan = crate::exact::to_production_plan(&exact, &prepared.items, &currency, &prepared.facility_counts);
+    serde_json::to_string(&prepared.to_js(plan, Some(proof))).unwrap_or_default()
+}
+
+fn no_plan() -> String {
+    serde_json::to_string(&empty_production_plan(
+        false,
+        Some("Could not find a profitable production path. Try increasing facility counts.".to_string()),
+    ))
+    .unwrap_or_default()
+}
+
+/// A plan request parsed and set up: owned facilities, modules, and items timed for the chosen
+/// Aniimo.
+struct PreparedInput {
+    input: JsPlanInput,
+    facility_counts: FacilityCounts,
+    module_levels: ModuleLevels,
+    items: Vec<ProductionItem>,
+    setup: Option<crate::models::AniimoSetup>,
+    requirements: crate::models::AniimoRequirements,
+    grower_steps: crate::models::GrowerSteps,
+}
+
+impl PreparedInput {
+    /// Parses `input_json`; on failure, the error result to return instead.
+    fn from_json(input_json: &str) -> Result<Self, String> {
+        let input: JsPlanInput = serde_json::from_str(input_json).map_err(|e| {
+            serde_json::to_string(&empty_production_plan(false, Some(format!("Invalid input: {}", e)))).unwrap_or_default()
+        })?;
+        let facility_counts = input.facility_counts();
+        let module_levels = ModuleLevels {
+            ecological_module: input.modules.ecological_module,
+            kitchen_module: input.modules.kitchen_module,
+            resource_detector: input.modules.resource_detector,
+            crafting_module: input.modules.crafting_module,
+        };
+        let mut items = get_embedded_items();
+        let setup = input.aniimo.as_deref().and_then(aniimo_setup_from);
+        let requirements = embedded_aniimo_requirements();
+        match setup {
+            Some(setup) => requirements.apply(setup, &mut items),
+            None => workers_from(&input.workers).apply(&mut items),
         }
-        None => serde_json::to_string(&empty_production_plan(
-            false,
-            Some(
-                "Could not find a profitable production path. Try increasing facility counts."
-                    .to_string(),
-            ),
-        ))
-        .unwrap_or_default(),
+        Ok(PreparedInput { input, facility_counts, module_levels, items, setup, requirements, grower_steps: embedded_grower_steps() })
+    }
+
+    /// The result the web page shows for `plan`, with each row's Aniimo; `proof` is the exact
+    /// planner's `(proven optimal, upper bound)`, if it made the plan.
+    fn to_js(&self, plan: crate::models::ProductionPlan, proof: Option<(bool, f64)>) -> JsProductionPlan {
+        let coin_items = plan
+            .coin_items
+            .into_iter()
+            .map(|step| {
+                let aniimo = match (self.setup, &step.item_name) {
+                    (Some(setup), Some(item)) if step.status == crate::models::PlanStepStatus::Producing => {
+                        self.requirements.get(item).map(|(ability, _)| {
+                            let worker = self.requirements.worker_for(item, setup);
+                            JsAniimo {
+                                ability: ability.to_string(),
+                                level: worker.suitability,
+                                personality_bonus: worker.personality_bonus,
+                            }
+                        })
+                    }
+                    _ => None,
+                };
+                let aniimo_tasks = self
+                    .setup
+                    .map(|setup| aniimo_tasks_for(&step, setup, &self.requirements, &self.grower_steps))
+                    .unwrap_or_default();
+                JsPlanStep { aniimo, aniimo_tasks, ..step.into() }
+            })
+            .collect();
+        JsProductionPlan {
+            success: true,
+            error: None,
+            currency: plan.currency,
+            rate_per_second: plan.rate_per_second,
+            coin_items,
+            income_streams: plan.income_streams.into_iter().map(Into::into).collect(),
+            byproduct_rates: plan.byproduct_rates,
+            environment_assignments: plan.environment_assignments.into_iter().map(Into::into).collect(),
+            candidates_evaluated: plan.candidates_evaluated,
+            trial_solves: plan.trial_solves,
+            proven_optimal: proof.map(|(proven, _)| proven),
+            upper_bound: proof.map(|(_, bound)| bound),
+        }
     }
 }
 
