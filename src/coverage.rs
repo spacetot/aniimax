@@ -6,9 +6,9 @@
 //! - It radiates coverage as a square of side `2 * `[`COVERAGE_RADIUS`] centered on its own exact
 //!   center (not its corner).
 //! - A facility is covered only if its own footprint overlaps that coverage square by a real
-//!   area; a corner-only touch is not enough. Since every footprint snaps to half tiles
-//!   ([`GRID_STEP`]), any nonzero overlap between two half-tile-aligned rectangles is
-//!   automatically at least 0.5x0.5, so this rule falls out for free from only ever generating
+//!   area; a corner-only touch is not enough. Since every footprint snaps to quarter tiles
+//!   ([`GRID_STEP`]), any nonzero overlap between two quarter-tile-aligned rectangles is
+//!   automatically at least 0.25x0.25, so this rule falls out for free from only ever generating
 //!   candidate positions on that grid; no separate minimum-area check is needed.
 //! - Facilities can't overlap the building itself or each other.
 //! - Facility footprints: Farmland/Dewy House 2x2, Woodland 4x4, Starfall Hammock/Tidewhisper
@@ -16,10 +16,10 @@
 //!
 //! ## Candidate generation is a bounded heuristic, not exhaustive
 //!
-//! Sweeping every half-tile position for every facility type would generate thousands of
+//! Sweeping every quarter-tile position for every facility type would generate thousands of
 //! candidates per type; intractable for the MILP branch & bound this feeds into (see
 //! `crate::optimizer::solve_facility_allocation`). Instead, [`candidate_positions`] finds the
-//! single best half-tile alignment for each facility type on its own, plus a handful of
+//! single best quarter-tile alignment for each facility type on its own, plus a handful of
 //! half-space variants (restricting that same search to one half of the region, split through the
 //! building's center) so the ILP has enough raw material to reconstruct mixed layouts when two or
 //! more types share one building's coverage. Candidate **generation** is this bounded, tuned
@@ -35,9 +35,9 @@ pub const BUILDING_SIZE: f64 = 2.0;
 /// Coverage radiates this far from the building's exact center in every direction, i.e. total
 /// coverage span is `2 * COVERAGE_RADIUS` (a 9x9 square).
 pub const COVERAGE_RADIUS: f64 = 4.5;
-/// Facilities and buildings snap to half tiles in game; also the smallest possible nonzero
-/// coverage overlap.
-pub const GRID_STEP: f64 = 0.5;
+/// Facilities and buildings snap to quarter tiles in game (screenshots show Farmland offset by
+/// both a quarter and a half tile); also the smallest possible nonzero coverage overlap.
+pub const GRID_STEP: f64 = 0.25;
 
 /// Every facility type whose environment-gated items are capacity-bound by owned environment
 /// buildings, with its fixed square footprint side length.
@@ -123,7 +123,7 @@ impl HalfSpace {
     }
 }
 
-/// Finds the single best half-tile alignment (offset) for tiling `size`-square facilities
+/// Finds the single best quarter-tile alignment (offset) for tiling `size`-square facilities
 /// around the fixed building/coverage geometry, optionally restricted to one `half`, and returns
 /// every valid position from that best alignment (valid = doesn't overlap the building, overlaps
 /// the coverage square by positive area). Also returns, second, the alignment fitting the same
@@ -248,7 +248,7 @@ pub struct PackingSolution {
 }
 
 /// Adds the non-overlap constraints for a set of placement variables, bounding how many can cover
-/// any single half-tile cell at once by `capacity`. This is a cell-based set-packing
+/// any single quarter-tile cell at once by `capacity`. This is a cell-based set-packing
 /// formulation (standard for "no two selected rectangles overlap"), not naive pairwise
 /// `var_i + var_j <= capacity` constraints; pairwise gives an extremely loose LP relaxation for
 /// this kind of problem, whereas bounding how many placements can cover each individual cell is

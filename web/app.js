@@ -907,11 +907,13 @@ function renderEnvironmentDiagram(layout, mode, building, rows = []) {
     const coverageSize = ENVIRONMENT_COVERAGE_RADIUS * 2;
     const tint = ENVIRONMENT_MODE_COLORS[mode] || '#9aa0a8';
 
-    // One-tile gridlines, aligned to whole tiles.
+    // Gridlines like the game's: stronger on whole tiles, very faint on the quarter tiles
+    // facilities snap to.
     const gridLines = [];
-    for (let t = Math.ceil(viewMin); t <= viewMin + viewSize; t++) {
-        gridLines.push(`<line x1="${t}" y1="${viewMin}" x2="${t}" y2="${viewMin + viewSize}" />`);
-        gridLines.push(`<line x1="${viewMin}" y1="${t}" x2="${viewMin + viewSize}" y2="${t}" />`);
+    for (let t = Math.ceil(viewMin * 4) / 4; t <= viewMin + viewSize; t += 0.25) {
+        const cls = Number.isInteger(t) ? 'tile' : 'quarter';
+        gridLines.push(`<line class="${cls}" x1="${t}" y1="${viewMin}" x2="${t}" y2="${viewMin + viewSize}" />`);
+        gridLines.push(`<line class="${cls}" x1="${viewMin}" y1="${t}" x2="${viewMin + viewSize}" y2="${t}" />`);
     }
 
     // Plots nearest the building first, each matched to a plan row of its facility type.

@@ -801,8 +801,13 @@ tbody tr:first-child td {
 
 .env-grid line {
     stroke: currentColor;
-    stroke-opacity: 0.18;
-    stroke-width: 0.03;
+    stroke-opacity: 0.2;
+    stroke-width: 0.035;
+}
+
+.env-grid line.quarter {
+    stroke-opacity: 0.05;
+    stroke-width: 0.02;
 }
 
 .env-plot text {
