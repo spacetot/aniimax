@@ -432,16 +432,18 @@ function populateHomeLevels() {
 // confirmed RV levels are estimates.
 function renderSimpleSummary() {
     const homeLevel = selectedHomeLevel();
-    const { facilities } = simpleSetup(homeLevel);
+    const { facilities, modules } = simpleSetup(homeLevel);
     const built = FACILITIES
         .map(f => ({ name: f.name, tier: facilities[f.name][0], hasLevels: f.hasLevels !== false }))
         .filter(({ tier }) => tier.count > 0)
         .map(({ name, tier, hasLevels }) => `${tier.count} ${name}${hasLevels ? ` Lv.${tier.level}` : ''}`);
     const estimate = homeLevel > COUNTS_CONFIRMED_UP_TO
-        ? ` Building counts are only confirmed up to RV level ${COUNTS_CONFIRMED_UP_TO}; above that they're carried forward and may be low, so check them in advanced mode.`
+        ? ` Building counts are only confirmed up to RV level ${COUNTS_CONFIRMED_UP_TO}; above that they're estimates, so check them in advanced mode.`
         : '';
+    const moduleText = `Ecological Module Lv.${modules.ecological_module}, Kitchen Module Lv.${modules.kitchen_module}, `
+        + `Resource Detector Lv.${modules.resource_detector}, Crafting Module Lv.${modules.crafting_module}`;
     document.getElementById('simple-summary').textContent =
-        `Assumes: ${built.join(', ')}, with every upgrade module maxed.${estimate}`;
+        `Assumes: ${built.join(', ')}. Modules: ${moduleText}.${estimate}`;
 }
 
 function applyConfigMode() {
