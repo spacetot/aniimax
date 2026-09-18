@@ -341,13 +341,13 @@ pub fn load_processing_no_energy(
 /// Loads all production data from the data directory.
 ///
 /// This function loads data from all facility types:
-/// - Raw materials: Farmland, Woodland, Mine, Well, Tidewhisper Sandcastle
-/// - Processing: Carousel Mill, Jukebox Dryer, Claw Game Cooker, Crafting Table, Simmering Pot
+/// - Raw materials: Farmland, Woodland, Mine, Well, and the Aniimo material facilities
+///   (Tidewhisper Sandcastle, Dewy House, Nimbus Bed, Starfall Hammock, Floral Windmill)
+/// - Processing: Carousel Mill, Jukebox Dryer, Claw Game Cooker, Crafting Table, Simmering Pot,
+///   Phonolfactory Table, Bouncy Brew Keg, Blazing Stove, Pickling Jar, Joy Wheel Loom
 ///
-/// Only facilities whose data has been verified against the full release are loaded. The rest
-/// (Phonolfactory Table, Bouncy Brew Keg, Joy Wheel Loom, the other Aniimo material facilities,
-/// and the release's other new processors) come back as their data is confirmed. Aniipod Maker is excluded
-/// because it doesn't turn a profit.
+/// Facilities that make nothing sellable for coins are left out: Aniipod Maker, Dance Pad
+/// Polisher, Woodworking Bench and Chimney Kiln.
 ///
 /// # Arguments
 ///
@@ -375,7 +375,9 @@ pub fn load_all_data(data_dir: &Path) -> Result<Vec<ProductionItem>, Box<dyn Err
     all_items.extend(load_woodland(&data_dir.join("woodland.csv"))?);
     all_items.extend(load_mine(&data_dir.join("mine.csv"))?);
     all_items.extend(load_well(&data_dir.join("well.csv"))?);
-    all_items.extend(load_tidewhisper_sandcastle(&data_dir.join("tidewhisper_sandcastle.csv"))?);
+    for (file, facility) in ANIIMO_MATERIAL_FILES {
+        all_items.extend(load_workload_raw_material(&data_dir.join(file), facility, None)?);
+    }
 
     // Load processing facilities
     all_items.extend(load_processing_with_energy(
@@ -390,14 +392,29 @@ pub fn load_all_data(data_dir: &Path) -> Result<Vec<ProductionItem>, Box<dyn Err
         &data_dir.join("claw_game_cooker.csv"),
         "Claw Game Cooker",
     )?);
-    all_items.extend(load_processing_no_energy(
-        &data_dir.join("crafting_table.csv"),
-        "Crafting Table",
-    )?);
-    all_items.extend(load_processing_no_energy(
-        &data_dir.join("simmering_pot.csv"),
-        "Simmering Pot",
-    )?);
+    for (file, facility) in PROCESSOR_FILES {
+        all_items.extend(load_processing_no_energy(&data_dir.join(file), facility)?);
+    }
 
     Ok(all_items)
 }
+
+/// Aniimo-worked gathering facilities that share the Mine's CSV layout but have no byproduct.
+const ANIIMO_MATERIAL_FILES: [(&str, &str); 5] = [
+    ("tidewhisper_sandcastle.csv", "Tidewhisper Sandcastle"),
+    ("dewy_house.csv", "Dewy House"),
+    ("nimbus_bed.csv", "Nimbus Bed"),
+    ("starfall_hammock.csv", "Starfall Hammock"),
+    ("floral_windmill.csv", "Floral Windmill"),
+];
+
+/// Processors whose CSVs use the no-energy layout (see [`load_processing_no_energy`]).
+const PROCESSOR_FILES: [(&str, &str); 7] = [
+    ("crafting_table.csv", "Crafting Table"),
+    ("simmering_pot.csv", "Simmering Pot"),
+    ("phonolfactory_table.csv", "Phonolfactory Table"),
+    ("bouncy_brew_keg.csv", "Bouncy Brew Keg"),
+    ("blazing_stove.csv", "Blazing Stove"),
+    ("pickling_jar.csv", "Pickling Jar"),
+    ("joy_wheel_loom.csv", "Joy Wheel Loom"),
+];

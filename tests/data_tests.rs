@@ -103,18 +103,7 @@ fn test_currency_types() {
 /// Ingredients referenced by a recipe that no facility in the data produces yet. When the facility
 /// that makes one of these is added, remove it from this list; when a new recipe references
 /// something not yet in the data, add it here deliberately.
-const KNOWN_MISSING_INGREDIENTS: &[&str] = &[
-    "cotton_fabric",
-    "cotton_thread",
-    "dyed_cotton_fabric",
-    "palm_rope",
-    "petals",
-    "rose_incense",
-    "scales",
-    "star",
-    "wool_fabric",
-    "woolen_yarn",
-];
+const KNOWN_MISSING_INGREDIENTS: &[&str] = &[];
 
 fn load_items() -> Option<Vec<aniimax::models::ProductionItem>> {
     let data_dir = Path::new("data");

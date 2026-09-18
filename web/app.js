@@ -674,7 +674,7 @@ const ENVIRONMENT_FACILITY_COLORS = {
     'Woodland': '#4caf50',
     'Starfall Hammock': '#42a5f5',
     'Tidewhisper Sandcastle': '#26c6da',
-    'Grass Blossom Mat': '#ab47bc',
+    'Floral Windmill': '#ab47bc',
     'Dewy House': '#ef8a80',
 };
 

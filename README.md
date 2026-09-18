@@ -4,7 +4,7 @@ A command-line tool, Rust library, and **web application** for optimizing produc
 
 Updated for the full release, with a joint LP-based facility-allocation engine for the web app (the CLI uses a simpler greedy approach; see [How the Optimization Works](#how-the-optimization-works) for the difference). Game data is being re-verified against the release facility by facility; facilities whose data hasn't been confirmed yet are left out until it is, so the calculator never recommends numbers from an older version of the game.
 
-> **Note:** Game data for the full release is still being filled in, so some facilities and items are missing. Know something we don't, or spot a wrong number? Add it to the [shared data sheet](https://docs.google.com/spreadsheets/d/1I3NsJQVqTzglthvmlokSbFlv9eKnpWlzHzBls1FruOo/edit). No account needed.
+> **Note:** Game data for the full release is still being filled in, so some facilities and items are missing.
 
 ## Try It Online
 
@@ -109,6 +109,7 @@ Options:
       --well <N>                     Number of Wells [default: 0]
       --tidewhisper-sandcastle <N>   Number of Tidewhisper Sandcastles [default: 0]
       --carousel-mill <N>            Number of Carousel Mill machines [default: 1]
+      --claw-game-cooker <N>         Number of Claw Game Cookers [default: 1]
       --jukebox-dryer <N>            Number of Jukebox Dryer machines [default: 1]
       --crafting-table <N>           Number of Crafting Table slots [default: 1]
       --simmering-pot <N>            Number of Simmering Pots [default: 0]
@@ -121,6 +122,7 @@ Options:
       --tidewhisper-sandcastle-level <N>
                                      Tidewhisper Sandcastle facility level [default: 1]
       --carousel-mill-level <N>      Carousel Mill facility level [default: 1]
+      --claw-game-cooker-level <N>   Claw Game Cooker facility level [default: 1]
       --jukebox-dryer-level <N>      Jukebox Dryer facility level [default: 1]
       --crafting-table-level <N>     Crafting Table facility level [default: 1]
       --simmering-pot-level <N>      Simmering Pot facility level [default: 1]
@@ -141,7 +143,7 @@ Options:
   -V, --version                      Print version
 ```
 
-> **CLI coverage:** the CLI exposes the 9 facilities listed above. Any facility not listed (Claw Game Cooker, and the environment buildings) defaults to 1 owned at level 1 when computing efficiencies. The CLI also doesn't model environment coverage, so it can recommend a crop that needs a Heat Furnace, Cooling Unit or Sunlamp you don't own. For full coverage, use the [web app](https://ae-bii.github.io/aniimax/) instead.
+> **CLI coverage:** the CLI exposes the 10 facilities listed above; any facility without a flag counts as not owned. The CLI also doesn't model environment coverage, so it can recommend a crop that needs a Heat Furnace, Cooling Unit or Sunlamp you don't own. For full coverage, use the [web app](https://ae-bii.github.io/aniimax/) instead.
 
 ## Example Output
 
@@ -161,6 +163,7 @@ Facilities (count x level):
   Well:               0 x Lv.1
   Tidewhisper:        0 x Lv.1
   Carousel Mill:      2 x Lv.2
+  Claw Game Cooker:   1 x Lv.1
   Jukebox Dryer:      1 x Lv.1
   Crafting Table:     1 x Lv.1
   Simmering Pot:      0 x Lv.1
@@ -173,7 +176,7 @@ Item Modules:
 
 Aniimo:             Lv.1 suitability
 
-Loaded 125 production items.
+Loaded 194 production items.
 
 +================================================================+
 |           ANIIMO PRODUCTION OPTIMIZATION RESULTS              |
@@ -587,13 +590,19 @@ Production data is stored in CSV files in the `data/` directory:
 - `mine.csv` - Mining (rock, clay, quartz ore, gem, ...); also yields Mineral Sand
 - `well.csv` - Water (well water, fresh water, spring waters)
 - `tidewhisper_sandcastle.csv` - Sea salt and pearl
+- `dewy_house.csv`, `nimbus_bed.csv`, `starfall_hammock.csv`, `floral_windmill.csv` - Aniimo materials (aromathyst, wool, petals, star, scales)
 - `carousel_mill.csv` - Grain and flour processing
 - `crafting_table.csv` - Crafting recipes
 - `claw_game_cooker.csv` - Baked goods, candy and desserts
 - `jukebox_dryer.csv` - Food drying
 - `simmering_pot.csv` - Porridge, jams, syrups and sugars
+- `phonolfactory_table.csv` - Incense, soap and perfume
+- `bouncy_brew_keg.csv` - Teas, juices and drinks
+- `blazing_stove.csv` - Cooked dishes and sweets
+- `pickling_jar.csv` - Sauces, vinegars and candied fruit
+- `joy_wheel_loom.csv` - Thread, yarn and fabric
 
-Only facilities verified against the full release are included; the rest are added as their data is confirmed.
+Farmland, Woodland, Mine, Well, Tidewhisper Sandcastle, Carousel Mill, Crafting Table, Claw Game Cooker, Jukebox Dryer and Simmering Pot are verified in game. The other nine facilities start from the data published by [Hideout Guides' Homeland Optimizer](https://www.hideoutgacha.com/games/aniimo/homeland-optimizer) and are being checked in game as they unlock.
 
 ### Adding New Items
 
@@ -634,9 +643,7 @@ Contributions are welcome! Here's how you can help:
 
 ### Adding Game Data
 
-The easiest way to help is the [shared data sheet](https://docs.google.com/spreadsheets/d/1I3NsJQVqTzglthvmlokSbFlv9eKnpWlzHzBls1FruOo/edit): one tab per facility with everything the calculator currently knows. Fix a wrong number, add a missing item, or add a whole new facility on the "Other facilities" tab. No account, git or CSV knowledge needed; every change is reviewed before it goes into the calculator.
-
-If you'd rather edit the data yourself:
+To add missing items or correct existing data:
 
 1. Edit the appropriate CSV file in `data/`, following the existing format for that facility
 2. If you add a new CSV, load it in both `src/data.rs` and `src/wasm.rs`

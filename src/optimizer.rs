@@ -2060,7 +2060,7 @@ fn solve_environment_coverage(
 ///
 /// # Environment coverage: real 2D geometric packing (`crate::coverage`)
 ///
-/// Farmland/Woodland/Starfall Hammock/Tidewhisper Sandcastle/Grass Blossom Mat/Dewy House crops
+/// Farmland/Woodland/Starfall Hammock/Tidewhisper Sandcastle/Floral Windmill/Dewy House crops
 /// can need a growing environment (`ProductionItem::environment`, e.g. "Cool", "Adequate") that
 /// only exists where an owned environment building (Heat Furnace/Cooling Unit/Sunlamp) covers it.
 /// A building's coverage is real 2D area, not a small set of fixed presets, so how many of each
@@ -4011,7 +4011,7 @@ pub fn time_to_reach_goal(plan: &ProductionPlan, target: f64, current: f64) -> O
     // starting a cycle that might still be in progress when `total_time` is reached, even though
     // that cycle's output isn't counted as a completed unit yet (see `SeedRequirement`'s doc
     // comment). Seeds only exist for Farmland and Woodland plots; Mine is mined (no
-    // seed), and the Aniimo-dispatch facilities (Nimbus Bed, Grass Blossom Mat, Starfall Hammock,
+    // seed), and the Aniimo-dispatch facilities (Nimbus Bed, Floral Windmill, Starfall Hammock,
     // Tidewhisper Sandcastle, Dewy House) are harvested via family dispatch, not planted either.
     // Processor rows are skipped too: they aren't planted, so they never need seeds.
     let mut seed_requirements: Vec<SeedRequirement> = plan

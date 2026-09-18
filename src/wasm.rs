@@ -292,10 +292,14 @@ fn get_embedded_items() -> Vec<ProductionItem> {
         });
     }
 
-    // Well and Tidewhisper Sandcastle items (same CSV shape as Mine; no byproduct)
+    // Well and the Aniimo material facilities (same CSV shape as Mine; no byproduct)
     for (facility, data) in [
         ("Well", include_str!("../data/well.csv")),
         ("Tidewhisper Sandcastle", include_str!("../data/tidewhisper_sandcastle.csv")),
+        ("Dewy House", include_str!("../data/dewy_house.csv")),
+        ("Nimbus Bed", include_str!("../data/nimbus_bed.csv")),
+        ("Starfall Hammock", include_str!("../data/starfall_hammock.csv")),
+        ("Floral Windmill", include_str!("../data/floral_windmill.csv")),
     ] {
         let mut rdr = ReaderBuilder::new()
             .trim(csv::Trim::All)
@@ -426,10 +430,15 @@ fn get_embedded_items() -> Vec<ProductionItem> {
         });
     }
 
-    // Crafting Table and Simmering Pot items (same CSV layout)
+    // Processors sharing the no-energy CSV layout
     for (facility, data) in [
         ("Crafting Table", include_str!("../data/crafting_table.csv")),
         ("Simmering Pot", include_str!("../data/simmering_pot.csv")),
+        ("Phonolfactory Table", include_str!("../data/phonolfactory_table.csv")),
+        ("Bouncy Brew Keg", include_str!("../data/bouncy_brew_keg.csv")),
+        ("Blazing Stove", include_str!("../data/blazing_stove.csv")),
+        ("Pickling Jar", include_str!("../data/pickling_jar.csv")),
+        ("Joy Wheel Loom", include_str!("../data/joy_wheel_loom.csv")),
     ] {
         let mut rdr = ReaderBuilder::new()
             .trim(csv::Trim::All)

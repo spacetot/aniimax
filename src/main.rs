@@ -15,10 +15,19 @@ use aniimax::{
 };
 
 /// Facilities an Aniimo works, where its ability level and personality bonus set the speed.
-const WORKER_FACILITIES: [&str; 8] = [
+const WORKER_FACILITIES: [&str; 17] = [
     "Mine",
     "Well",
     "Tidewhisper Sandcastle",
+    "Dewy House",
+    "Nimbus Bed",
+    "Starfall Hammock",
+    "Floral Windmill",
+    "Phonolfactory Table",
+    "Bouncy Brew Keg",
+    "Blazing Stove",
+    "Pickling Jar",
+    "Joy Wheel Loom",
     "Carousel Mill",
     "Crafting Table",
     "Claw Game Cooker",
@@ -105,6 +114,15 @@ struct Args {
     #[arg(long, default_value = "1")]
     carousel_mill_level: u32,
 
+    // ========== Claw Game Cooker ==========
+    /// Number of Claw Game Cookers available
+    #[arg(long, default_value = "1")]
+    claw_game_cooker: u32,
+
+    /// Claw Game Cooker facility level
+    #[arg(long, default_value = "1")]
+    claw_game_cooker_level: u32,
+
     // ========== Jukebox Dryer ==========
     /// Number of Jukebox Dryer machines available
     #[arg(long, default_value = "1")]
@@ -169,14 +187,15 @@ fn main() -> Result<(), Box<dyn Error>> {
         std::process::exit(1);
     }
 
-    // Build facility counts from args (count, level) tuples
-    let facility_counts = FacilityCounts::from_pairs(&[
+    // Build facility counts from args (count, level) tuples; facilities without a flag aren't owned
+    let facility_counts = FacilityCounts::only(&[
         ("Farmland", args.farmland, args.farmland_level),
         ("Woodland", args.woodland, args.woodland_level),
         ("Mine", args.mine, args.mine_level),
         ("Well", args.well, args.well_level),
         ("Tidewhisper Sandcastle", args.tidewhisper_sandcastle, args.tidewhisper_sandcastle_level),
         ("Carousel Mill", args.carousel_mill, args.carousel_mill_level),
+        ("Claw Game Cooker", args.claw_game_cooker, args.claw_game_cooker_level),
         ("Jukebox Dryer", args.jukebox_dryer, args.jukebox_dryer_level),
         ("Crafting Table", args.crafting_table, args.crafting_table_level),
         ("Simmering Pot", args.simmering_pot, args.simmering_pot_level),
@@ -215,6 +234,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!("  Well:               {} x Lv.{}", args.well, args.well_level);
     println!("  Tidewhisper:        {} x Lv.{}", args.tidewhisper_sandcastle, args.tidewhisper_sandcastle_level);
     println!("  Carousel Mill:      {} x Lv.{}", args.carousel_mill, args.carousel_mill_level);
+    println!("  Claw Game Cooker:   {} x Lv.{}", args.claw_game_cooker, args.claw_game_cooker_level);
     println!("  Jukebox Dryer:      {} x Lv.{}", args.jukebox_dryer, args.jukebox_dryer_level);
     println!("  Crafting Table:     {} x Lv.{}", args.crafting_table, args.crafting_table_level);
     println!("  Simmering Pot:      {} x Lv.{}", args.simmering_pot, args.simmering_pot_level);

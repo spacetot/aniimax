@@ -12,7 +12,7 @@
 //!   generating candidate positions on that grid; no separate minimum-area check is needed.
 //! - Facilities can't overlap the building itself or each other.
 //! - Facility footprints: Farmland/Dewy House 2x2, Woodland 4x4, Starfall Hammock/Tidewhisper
-//!   Sandcastle/Grass Blossom Mat 5x5; see [`ENVIRONMENT_GATED_FACILITIES`].
+//!   Sandcastle/Floral Windmill 5x5; see [`ENVIRONMENT_GATED_FACILITIES`].
 //!
 //! ## Candidate generation is a bounded heuristic, not exhaustive
 //!
@@ -45,7 +45,7 @@ pub const ENVIRONMENT_GATED_FACILITIES: &[(&str, f64)] = &[
     ("Woodland", 4.0),
     ("Starfall Hammock", 5.0),
     ("Tidewhisper Sandcastle", 5.0),
-    ("Grass Blossom Mat", 5.0),
+    ("Floral Windmill", 5.0),
     ("Dewy House", 2.0),
 ];
 
