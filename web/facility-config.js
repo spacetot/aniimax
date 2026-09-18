@@ -178,6 +178,10 @@ function atHomeLevel(list, homeLevel) {
     return list[Math.min(homeLevel, list.length) - 1];
 }
 
+// How many Aniimo can live on the homeland at each RV level (index = RV level - 1; `null` where
+// unknown).
+export const ANIIMO_MAX = [null, 8, 11, 14, 17, 20, 22, 24, 26, 28, 30, 32, 34, 36, 38, 40, 42, 43, 44, 45];
+
 // Highest RV level whose building counts have been confirmed in game.
 export const COUNTS_CONFIRMED_UP_TO = 4;
 

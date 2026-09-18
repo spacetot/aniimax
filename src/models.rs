@@ -240,6 +240,44 @@ impl AniimoRequirements {
     }
 }
 
+/// One Aniimo job in a crop or tree's growing cycle, e.g. Sowing (Grass, workload 3).
+#[derive(Debug, Clone, PartialEq)]
+pub struct GrowerStep {
+    pub step: String,
+    pub ability: String,
+    pub min_level: u32,
+    pub workload: f64,
+}
+
+/// The Aniimo jobs each Farmland/Woodland item needs per harvest (see `data/grower_steps.csv`).
+/// Any Aniimo on the homeland with the right ability does them. They take seconds against a grow
+/// time of minutes, so the plan's grow times leave them out.
+///
+/// ```
+/// use aniimax::models::{GrowerStep, GrowerSteps};
+///
+/// let mut steps = GrowerSteps::default();
+/// steps.insert("wheat", GrowerStep { step: "Sowing".into(), ability: "Grass".into(), min_level: 1, workload: 3.0 });
+/// assert_eq!(steps.get("wheat").len(), 1);
+/// assert!(steps.get("rose").is_empty());
+/// ```
+#[derive(Debug, Clone, Default)]
+pub struct GrowerSteps {
+    by_item: std::collections::HashMap<String, Vec<GrowerStep>>,
+}
+
+impl GrowerSteps {
+    pub fn insert(&mut self, item: &str, step: GrowerStep) -> &mut Self {
+        self.by_item.entry(item.to_string()).or_default().push(step);
+        self
+    }
+
+    /// `item`'s jobs in growing order; empty for anything that isn't a crop or tree.
+    pub fn get(&self, item: &str) -> &[GrowerStep] {
+        self.by_item.get(item).map_or(&[], Vec::as_slice)
+    }
+}
+
 /// Efficiency metrics for an item when consumed for energy.
 #[derive(Debug, Clone)]
 pub struct EnergyItemEfficiency {
@@ -367,6 +405,9 @@ pub struct PlanStep {
     /// Producing row for an environment-gated crop (processor rows, idle/unavailable rows, and
     /// ungated crops all leave this `None`).
     pub environment: Option<String>,
+    /// On a producing processor row, how many of its `facility_count` units are busy on average
+    /// (a unit waiting on ingredients frees its Aniimo for other work). `None` elsewhere.
+    pub busy_units: Option<f64>,
 }
 
 /// How many times a Farmland/Woodland plot needs to be (re-)planted with a fresh seed over the

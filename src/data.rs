@@ -10,7 +10,7 @@ use std::fs::File;
 use std::path::Path;
 
 use crate::models::{
-    AniimoRequirements, FarmlandRow, MineralRow, ProcessingRowNoEnergy, ProcessingRowWithEnergy,
+    AniimoRequirements, FarmlandRow, GrowerStep, GrowerSteps, MineralRow, ProcessingRowNoEnergy, ProcessingRowWithEnergy,
     ProductionItem, WoodlandRow,
 };
 
@@ -37,6 +37,36 @@ pub fn parse_aniimo_requirements(csv_text: &str) -> Result<AniimoRequirements, B
 /// Loads `aniimo_requirements.csv` from the data directory; see [`parse_aniimo_requirements`].
 pub fn load_aniimo_requirements(data_dir: &Path) -> Result<AniimoRequirements, Box<dyn Error>> {
     parse_aniimo_requirements(&std::fs::read_to_string(data_dir.join("aniimo_requirements.csv"))?)
+}
+
+/// One row of `grower_steps.csv`.
+#[derive(Debug, serde::Deserialize)]
+struct GrowerStepRow {
+    name: String,
+    step: String,
+    ability: String,
+    min_level: u32,
+    workload: f64,
+}
+
+/// Parses the contents of `grower_steps.csv` (columns `name, facility, step, ability, min_level,
+/// workload`), keeping each item's steps in file order.
+pub fn parse_grower_steps(csv_text: &str) -> Result<GrowerSteps, Box<dyn Error>> {
+    let mut steps = GrowerSteps::default();
+    let mut rdr = ReaderBuilder::new().trim(csv::Trim::All).from_reader(csv_text.as_bytes());
+    for row in rdr.deserialize::<GrowerStepRow>() {
+        let row = row?;
+        steps.insert(
+            &row.name,
+            GrowerStep { step: row.step, ability: row.ability, min_level: row.min_level, workload: row.workload },
+        );
+    }
+    Ok(steps)
+}
+
+/// Loads `grower_steps.csv` from the data directory; see [`parse_grower_steps`].
+pub fn load_grower_steps(data_dir: &Path) -> Result<GrowerSteps, Box<dyn Error>> {
+    parse_grower_steps(&std::fs::read_to_string(data_dir.join("grower_steps.csv"))?)
 }
 
 /// Parses a module requirement string (e.g., "ecological_module:1") into a tuple.

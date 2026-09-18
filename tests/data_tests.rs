@@ -257,3 +257,26 @@ fn test_aniimo_requirements_cover_every_worked_recipe() {
         assert!(item.workload.is_some(), "{} has a fixed grow time; it doesn't need an Aniimo row", cols[0]);
     }
 }
+
+// Every crop and tree needs its Aniimo jobs in grower_steps.csv so the plan can count the Aniimo
+// that tend Farmland and Woodland, and nothing may be listed that isn't grown there.
+#[test]
+fn test_grower_steps_cover_every_crop_and_tree() {
+    let Some(items) = load_items() else { return };
+    let steps = aniimax::data::load_grower_steps(Path::new("data")).expect("Failed to load grower steps");
+    for item in items.iter().filter(|i| i.facility == "Farmland" || i.facility == "Woodland") {
+        let jobs = steps.get(&item.name);
+        assert!(jobs.iter().any(|j| j.step == "Sowing"), "{} has no Sowing step in grower_steps.csv", item.name);
+        assert!(jobs.iter().all(|j| j.workload > 0.0 && (1..=3).contains(&j.min_level)), "{} has a bad step", item.name);
+    }
+
+    let text = std::fs::read_to_string("data/grower_steps.csv").unwrap();
+    for line in text.lines().skip(1).filter(|l| !l.trim().is_empty()) {
+        let cols: Vec<&str> = line.split(',').map(str::trim).collect();
+        let item = items
+            .iter()
+            .find(|i| i.name == cols[0])
+            .unwrap_or_else(|| panic!("grower_steps.csv lists {}, which isn't in the data", cols[0]));
+        assert_eq!(cols[1], item.facility, "{} is grown at {}, not {}", cols[0], item.facility, cols[1]);
+    }
+}

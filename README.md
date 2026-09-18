@@ -20,7 +20,7 @@ Updated for the full release, with a joint LP-based facility-allocation engine f
 - **Whole-Unit Realism**: Growers are rounded to whole plots, processors are dedicated to one recipe each, matching how the game actually works, never a fractional or time-shared facility
 - **Byproduct Priority**: Optionally guarantee the maximum Wood Blocks/Mineral Sand rate first, even at some cost to Coins
 - **Recipe Reference Page**: Every recipe in the game data, browsable by facility, independent of what you own
-- **Aniimo Recommendations**: Every plan is solved twice, for the Best Aniimo (level 3 with the facility's personality bonus everywhere) and the Minimum (the lowest ability level each recipe accepts), and lists the ability, level and personality to station at each facility; times follow measured in-game speeds (108 workload takes 108s at level 1, 36s at level 2, 27s at level 3; the personality bonus makes it 20% faster)
+- **Aniimo Recommendations**: Every plan is solved twice, for the Best Aniimo (level 3 with the facility's personality bonus everywhere) and the Minimum (the lowest ability level each recipe accepts), and lists the Aniimo team it needs: each ability, level and personality, and how many it takes to keep up with the work (Farmland and Woodland jobs included), checked against how many Aniimo your RV level allows; times follow measured in-game speeds (108 workload takes 108s at level 1, 36s at level 2, 27s at level 3; the personality bonus makes it 20% faster)
 - **Item Upgrade Modules**: Support for module-unlocked items (Ecological, Kitchen, Resource Detector, Crafting)
 
 **CLI / library**

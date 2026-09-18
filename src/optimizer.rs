@@ -3864,6 +3864,7 @@ pub fn find_production_plan_with_progress(
                         is_grower: true,
                         cycle_time: None,
                         environment: None,
+                        busy_units: None,
                     }];
                 }
 
@@ -3895,6 +3896,7 @@ pub fn find_production_plan_with_progress(
                             is_grower: true,
                             cycle_time,
                             environment,
+                            busy_units: None,
                         }
                     })
                     .collect();
@@ -3908,6 +3910,7 @@ pub fn find_production_plan_with_progress(
                         is_grower: true,
                         cycle_time: None,
                         environment: None,
+                        busy_units: None,
                     });
                 }
                 return steps;
@@ -3937,6 +3940,7 @@ pub fn find_production_plan_with_progress(
                     is_grower: false,
                     cycle_time: None,
                     environment: None,
+                    busy_units: None,
                 }];
             }
 
@@ -3981,7 +3985,7 @@ pub fn find_production_plan_with_progress(
             let mut steps: Vec<PlanStep> = contributors
                 .iter()
                 .zip(&needed)
-                .map(|((eff, item_name, _, _), &count)| {
+                .map(|((eff, item_name, units_needed, _), &count)| {
                     let reason = reason_for(eff, item_name);
                     PlanStep {
                         item_name: Some(item_name.to_string()),
@@ -3992,6 +3996,7 @@ pub fn find_production_plan_with_progress(
                         is_grower: false,
                         cycle_time: None,
                         environment: None,
+                        busy_units: Some(units_needed.min(count as f64)),
                     }
                 })
                 .collect();
@@ -4006,6 +4011,7 @@ pub fn find_production_plan_with_progress(
                     is_grower: false,
                     cycle_time: None,
                     environment: None,
+                    busy_units: None,
                 });
             }
             steps

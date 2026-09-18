@@ -2,7 +2,7 @@
 
 import {
     FACILITIES, FACILITY_CATEGORIES, FACILITY_CATEGORY_BY_NAME,
-    MAX_HOME_LEVEL, COUNTS_CONFIRMED_UP_TO, simpleSetup,
+    MAX_HOME_LEVEL, COUNTS_CONFIRMED_UP_TO, ANIIMO_MAX, simpleSetup,
 } from './facility-config.js';
 
 let wasmReady = false;
@@ -652,10 +652,21 @@ const ENVIRONMENT_MODE_ORDER = ['Warm', 'Scorching', 'Cool', 'Freeze', 'Adequate
 // trees, idle facilities).
 function aniimoLabel(step) {
     const a = step.aniimo;
-    if (!a) return '-';
-    if (!a.personality_bonus) return `${a.ability} Lv.${a.level}`;
-    const personality = FACILITIES.find(f => f.name === step.facility)?.personality;
-    return `${a.ability} Lv.${a.level} · ${personality || 'matching personality'}`;
+    if (!a) {
+        // Crops and trees: the abilities their planting and harvesting jobs need.
+        const tasks = step.aniimo_tasks || [];
+        if (tasks.length === 0) return '-';
+        return tasks.map(t => `${t.ability} Lv.${t.level}`).join(', ');
+    }
+    return taskLabel(a, step.facility);
+}
+
+// "Fire Lv.3 · Practical": one kind of Aniimo, with the facility's personality when the plan
+// counts on its bonus.
+function taskLabel(task, facility) {
+    if (!task.personality_bonus) return `${task.ability} Lv.${task.level}`;
+    const personality = FACILITIES.find(f => f.name === facility)?.personality;
+    return `${task.ability} Lv.${task.level} · ${personality || 'matching personality'}`;
 }
 
 function facilityPlanTable(rows) {
@@ -685,38 +696,74 @@ function facilityPlanTable(rows) {
     `;
 }
 
-// The Aniimo to station for the shown plan, one row per distinct ability / level / personality,
-// with how many are needed and where they go.
+// The Aniimo team the shown plan needs, one row per distinct ability / level / personality.
+// Aniimo move between any jobs they can do, so each row needs enough of them to cover the work
+// on average (a facility waiting on ingredients frees its Aniimo), rounded up. Facilities with a
+// resident Aniimo (Sandcastle and the like) are always busy, so they count one each.
 function renderAniimoSummary(plan) {
     const container = document.getElementById('aniimo-summary');
     const groups = new Map();
     (plan.coin_items || []).forEach(step => {
-        if (!step.aniimo) return;
-        const key = aniimoLabel(step);
-        if (!groups.has(key)) groups.set(key, { count: 0, where: new Map() });
-        const g = groups.get(key);
-        g.count += step.facility_count;
-        const place = `${step.facility} (${step.item_name})`;
-        g.where.set(place, (g.where.get(place) || 0) + step.facility_count);
+        (step.aniimo_tasks || []).forEach(task => {
+            const key = taskLabel(task, step.facility);
+            if (!groups.has(key)) {
+                groups.set(key, { label: key, ability: task.ability, level: task.level, bonus: task.personality_bonus, busy: 0, where: new Map() });
+            }
+            const g = groups.get(key);
+            g.busy += task.busy;
+            const place = `${step.facility} (${step.item_name})`;
+            g.where.set(place, (g.where.get(place) || 0) + step.facility_count);
+        });
     });
     if (groups.size === 0) {
-        container.innerHTML = '<p class="hint">No facility in this plan needs a particular Aniimo.</p>';
+        container.innerHTML = '<p class="hint">Nothing in this plan needs an Aniimo.</p>';
         return;
     }
-    const rows = [...groups.entries()]
-        .sort((a, b) => a[0].localeCompare(b[0]))
-        .map(([label, g]) => {
+    // An Aniimo can do any job of its ability at or below its level, so work that fits in a
+    // higher-level row's spare time (e.g. Farmland jobs, which take any level) joins that row
+    // instead of calling for another Aniimo. Rows that count on a personality bonus stay separate.
+    const sorted = [...groups.values()].sort((a, b) => b.level - a.level || Number(b.bonus) - Number(a.bonus) || a.label.localeCompare(b.label));
+    const kept = [];
+    sorted.forEach(g => {
+        const host = g.bonus ? null : kept.find(k => k.ability === g.ability && k.level >= g.level && k.spare >= g.busy - 1e-6);
+        if (host) {
+            host.spare -= g.busy;
+            host.busy += g.busy;
+            g.where.forEach((n, place) => host.where.set(place, (host.where.get(place) || 0) + n));
+            return;
+        }
+        g.count = Math.max(1, Math.ceil(g.busy - 1e-6));
+        g.spare = g.count - g.busy;
+        kept.push(g);
+    });
+    let total = 1; // the Hauling row below
+    const rows = kept
+        .sort((a, b) => a.label.localeCompare(b.label))
+        .map(g => {
+            total += g.count;
             const where = [...g.where.entries()].map(([place, n]) => `${n > 1 ? n + '× ' : ''}${place}`).join(', ');
-            return `<tr><td>${label}</td><td>${g.count}</td><td>${where}</td></tr>`;
+            return `<tr><td>${g.label}</td><td>${g.count}</td><td>${g.busy.toFixed(1)}</td><td>${where}</td></tr>`;
         })
         .join('');
+    const haulingRow = `<tr><td>Hauling, any level</td><td>1+</td><td>?</td><td>Carries produce to storage. How much work this is isn't known yet; add more if produce piles up.</td></tr>`;
+
+    let capNote = '';
+    const cap = isSimpleMode() ? ANIIMO_MAX[selectedHomeLevel() - 1] : null;
+    if (cap && total > cap) {
+        capNote = `<p class="hint small">That's ${total} Aniimo, more than the ${cap} an RV level ${selectedHomeLevel()} homeland holds. Aniimo with more than one of these abilities can cover several rows.</p>`;
+    } else if (cap) {
+        capNote = `<p class="hint small">That's ${total} Aniimo; an RV level ${selectedHomeLevel()} homeland holds ${cap}.</p>`;
+    } else {
+        capNote = `<p class="hint small">That's ${total} Aniimo at most; ones with more than one of these abilities can cover several rows.</p>`;
+    }
     container.innerHTML = `
         <div class="table-wrapper">
             <table class="facility-plan-table">
-                <thead><tr><th>Aniimo</th><th>How many</th><th>Where</th></tr></thead>
-                <tbody>${rows}</tbody>
+                <thead><tr><th>Aniimo</th><th>How many</th><th>Busy on average</th><th>Where</th></tr></thead>
+                <tbody>${rows}${haulingRow}</tbody>
             </table>
         </div>
+        ${capNote}
     `;
 }
 

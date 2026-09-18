@@ -729,6 +729,79 @@ pub struct JsPlanStep {
     /// rows of Aniimo-worked facilities, and only when the plan was made for a setup.
     #[serde(default)]
     pub aniimo: Option<JsAniimo>,
+    /// See `crate::models::PlanStep::busy_units`.
+    #[serde(default)]
+    pub busy_units: Option<f64>,
+    /// The Aniimo work this row creates under the plan's Aniimo setup, one entry per ability;
+    /// empty when the plan wasn't made for a setup or the row produces nothing.
+    #[serde(default)]
+    pub aniimo_tasks: Vec<JsAniimoTask>,
+}
+
+/// Aniimo work a plan row creates for one ability: how many Aniimo of that ability and level it
+/// keeps busy on average.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JsAniimoTask {
+    pub ability: String,
+    pub level: u32,
+    pub personality_bonus: bool,
+    pub busy: f64,
+}
+
+/// The Farmland/Woodland Aniimo jobs embedded in the web build; see `data/grower_steps.csv`.
+fn embedded_grower_steps() -> crate::models::GrowerSteps {
+    crate::data::parse_grower_steps(include_str!("../data/grower_steps.csv"))
+        .expect("embedded grower_steps.csv is valid")
+}
+
+/// The Aniimo work one producing row creates. A worked facility keeps one Aniimo busy per busy
+/// unit (every unit, for gatherers like the Mine, which never wait on ingredients). A crop or tree
+/// needs each of its jobs done once per harvest by whichever Aniimo has the ability; those jobs
+/// accept any level, so they're counted at their minimum level under either setup.
+fn aniimo_tasks_for(
+    step: &crate::models::PlanStep,
+    setup: crate::models::AniimoSetup,
+    requirements: &crate::models::AniimoRequirements,
+    grower_steps: &crate::models::GrowerSteps,
+) -> Vec<JsAniimoTask> {
+    use crate::models::{PlanStepStatus, Worker};
+    let Some(item) = step.item_name.as_deref() else {
+        return Vec::new();
+    };
+    if step.status != PlanStepStatus::Producing {
+        return Vec::new();
+    }
+    if let Some((ability, _)) = requirements.get(item) {
+        let worker = requirements.worker_for(item, setup);
+        return vec![JsAniimoTask {
+            ability: ability.to_string(),
+            level: worker.suitability,
+            personality_bonus: worker.personality_bonus,
+            busy: step.busy_units.unwrap_or(step.facility_count as f64),
+        }];
+    }
+    let Some(cycle_time) = step.cycle_time.filter(|t| *t > 0.0) else {
+        return Vec::new();
+    };
+    let harvests_per_second = step.facility_count as f64 / cycle_time;
+    let mut tasks: Vec<JsAniimoTask> = Vec::new();
+    for job in grower_steps.get(item) {
+        let level = job.min_level;
+        let busy = harvests_per_second * Worker::new(level, false).seconds_for(job.workload);
+        match tasks.iter_mut().find(|t| t.ability == job.ability) {
+            Some(task) => {
+                task.level = task.level.max(level);
+                task.busy += busy;
+            }
+            None => tasks.push(JsAniimoTask {
+                ability: job.ability.clone(),
+                level,
+                personality_bonus: false,
+                busy,
+            }),
+        }
+    }
+    tasks
 }
 
 /// The Aniimo a plan row needs: its ability, ability level, and whether the plan assumes the
@@ -784,6 +857,8 @@ impl From<crate::models::PlanStep> for JsPlanStep {
             cycle_time: s.cycle_time,
             environment: s.environment,
             aniimo: None,
+            busy_units: s.busy_units,
+            aniimo_tasks: Vec::new(),
         }
     }
 }
@@ -799,6 +874,7 @@ impl From<JsPlanStep> for crate::models::PlanStep {
             is_grower: s.is_grower,
             cycle_time: s.cycle_time,
             environment: s.environment,
+            busy_units: s.busy_units,
         }
     }
 }
@@ -1020,6 +1096,7 @@ pub fn find_plan(input_json: &str, on_progress: Option<js_sys::Function>) -> Str
     let mut items = get_embedded_items();
     let setup = input.aniimo.as_deref().and_then(aniimo_setup_from);
     let requirements = embedded_aniimo_requirements();
+    let grower_steps = embedded_grower_steps();
     match setup {
         Some(setup) => requirements.apply(setup, &mut items),
         None => workers_from(&input.workers).apply(&mut items),
@@ -1061,7 +1138,10 @@ pub fn find_plan(input_json: &str, on_progress: Option<js_sys::Function>) -> Str
                         }
                         _ => None,
                     };
-                    JsPlanStep { aniimo, ..step.into() }
+                    let aniimo_tasks = setup
+                        .map(|setup| aniimo_tasks_for(&step, setup, &requirements, &grower_steps))
+                        .unwrap_or_default();
+                    JsPlanStep { aniimo, aniimo_tasks, ..step.into() }
                 })
                 .collect();
             let result = JsProductionPlan {
@@ -1297,7 +1377,16 @@ pub fn get_all_items() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{embedded_aniimo_requirements, get_embedded_items};
+    use super::{embedded_aniimo_requirements, embedded_grower_steps, get_embedded_items};
+
+    // Every crop and tree the web build knows has its Aniimo jobs listed.
+    #[test]
+    fn embedded_grower_steps_cover_farmland_and_woodland() {
+        let steps = embedded_grower_steps();
+        for item in get_embedded_items().iter().filter(|i| i.facility == "Farmland" || i.facility == "Woodland") {
+            assert!(!steps.get(&item.name).is_empty(), "{} has no embedded grower steps", item.name);
+        }
+    }
 
     // Every Aniimo-worked recipe the web build knows has an embedded requirement row.
     #[test]
