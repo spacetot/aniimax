@@ -1143,10 +1143,20 @@ footer {
 }
 
 .disclaimer {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.5rem;
     font-style: normal;
+    color: var(--warning);
+    border-color: color-mix(in srgb, var(--warning) 45%, transparent);
     border-radius: var(--radius);
-    background: var(--surface);
+    background: color-mix(in srgb, var(--warning) 9%, var(--surface));
     margin-bottom: 1.5rem;
+}
+
+.disclaimer-icon {
+    font-size: 0.95rem;
+    line-height: 1.2;
 }
 
 /* Segmented tabs built from radio labels. */

@@ -15,8 +15,12 @@ let worker = null;
 let nextRequestId = 0;
 const pendingWorkerRequests = new Map();
 
+// Tags this page load's worker (and, through it, the wasm solver; see worker.js) so the browser
+// never runs a cached older solver next to newer page code.
+const WORKER_URL = `./worker.js?load=${Date.now()}`;
+
 function initWorker() {
-    worker = new Worker('./worker.js', { type: 'module' });
+    worker = new Worker(WORKER_URL, { type: 'module' });
     worker.onmessage = (event) => {
         const { id, type, ok, result, error, count } = event.data;
         const pending = pendingWorkerRequests.get(id);
@@ -1186,7 +1190,8 @@ function displayPlan(plan, scroll = true) {
         const gap = Math.max(0, (plan.upper_bound - plan.rate_per_second) / plan.upper_bound * 100);
         explored.textContent = `Best plan found in the time allowed; the best possible is at most ${gap.toFixed(1)}% higher.`;
     } else {
-        explored.textContent = 'Found with the backup planner, so it may not be the very best plan.';
+        const reason = plan.fallback_reason ? ` (${plan.fallback_reason})` : '';
+        explored.textContent = `The exact planner couldn't run${reason}, so this plan comes from the backup planner and may not be the very best. Reloading the page usually fixes this.`;
     }
 
     const unverifiedEl = document.getElementById('plan-unverified');
