@@ -1066,6 +1066,10 @@ pub struct JsLevelUpReport {
     pub seconds: f64,
     /// One entry per thing the level-up costs.
     pub requirements: Vec<JsLevelUpRequirement>,
+    /// Anything else left over when it's ready (unprocessed Wood Blocks or Mineral Sand, a lower
+    /// tier), as `(item, amount)`.
+    #[serde(default)]
+    pub leftovers: Vec<(String, f64)>,
 }
 
 /// One cost of a level-up and how the plan covers it.
@@ -1217,12 +1221,18 @@ struct JsStage {
     /// Level-ups per day from [`exact_level_up_problem`].
     #[serde(default)]
     pace: Option<f64>,
+    /// Coins per second at that pace, from solving [`exact_problem`] with just the pace; then the
+    /// model spends spare Bench and Kiln time on the level-up (see
+    /// [`crate::exact::Goal::StockUp`]).
+    #[serde(default)]
+    coins: Option<f64>,
 }
 
 impl JsStage {
     fn goal<'a>(&'a self, input: &'a JsPlanInput) -> crate::exact::Goal<'a> {
-        match (&input.level_up, self.pace) {
-            (Some(level_up), Some(pace)) => crate::exact::Goal::EarnWhileLevelingUp(level_up, pace),
+        match (&input.level_up, self.pace, self.coins) {
+            (Some(level_up), Some(pace), Some(coins)) => crate::exact::Goal::StockUp(level_up, pace, coins),
+            (Some(level_up), Some(pace), None) => crate::exact::Goal::EarnWhileLevelingUp(level_up, pace),
             _ => crate::exact::Goal::Earn { floors: &self.floors },
         }
     }
@@ -1275,7 +1285,7 @@ pub fn exact_plan(input_json: &str, stage_json: &str, solution_json: &str) -> St
     let currency = prepared.input.currency.clone();
     let goal = stage.goal(&prepared.input);
     let level_up = match goal {
-        crate::exact::Goal::EarnWhileLevelingUp(level_up, _) => Some(level_up),
+        crate::exact::Goal::EarnWhileLevelingUp(level_up, _) | crate::exact::Goal::StockUp(level_up, ..) => Some(level_up),
         _ => None,
     };
     let Some(exact) = crate::exact::plan_from_values(
@@ -1334,7 +1344,24 @@ fn level_up_report(
             JsLevelUpRequirement { name: name.clone(), need: *need, have, per_second, seconds }
         })
         .collect();
-    Some(JsLevelUpReport { seconds: crate::exact::PACE_UNIT / pace, requirements })
+    let seconds = crate::exact::PACE_UNIT / pace;
+    let level_up_item = |name: &str| {
+        crate::models::BYPRODUCT_ITEMS.iter().any(|(_, item)| *item == name)
+            || items.iter().any(|i| i.name == name && crate::exact::takes_turns(i))
+    };
+    let mut names: Vec<&str> = net.keys().map(String::as_str).chain(level_up.stock.iter().map(|(n, _)| n.as_str())).collect();
+    names.sort_unstable();
+    names.dedup();
+    let leftovers = names
+        .into_iter()
+        .filter(|name| level_up_item(name) && !level_up.cost.iter().any(|(n, _)| n == name))
+        .filter_map(|name| {
+            let have = level_up.stock.iter().filter(|(n, _)| n == name).fold(0.0, |sum, (_, a)| sum + a);
+            let left = have + net.get(name).copied().unwrap_or(0.0) * seconds;
+            (left >= 1.0).then(|| (name.to_string(), left))
+        })
+        .collect();
+    Some(JsLevelUpReport { seconds, requirements, leftovers })
 }
 
 fn no_plan() -> String {

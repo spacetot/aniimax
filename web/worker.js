@@ -76,17 +76,27 @@ async function exactPlanJson(pkg, payload) {
             levelUpNote = 'unreachable';
         }
     }
-    const stageJson = JSON.stringify(stage);
-    const problem = JSON.parse(exact_problem(payload, stageJson));
+    let stageJson = JSON.stringify(stage);
+    let problem = JSON.parse(exact_problem(payload, stageJson));
     if (!problem.lp) throw new Error('this setup isn\'t covered by the exact planner');
-    const solved = await solveModel(problem);
+    let solved = await solveModel(problem);
     if (!solved) throw new Error('the solver found no plan');
-    const proven = solved.proven && allProven;
+    let proven = solved.proven && allProven;
     let bound = solved.objective;
     if (!proven) {
         // The same model without whole units: the most any plan could earn.
         const relaxed = (await newHighs()).solve(problem.lp.replace(/\nGeneral\n[\s\S]*\nEnd/, '\nEnd'), {});
         bound = relaxed.ObjectiveValue;
+    }
+    if (stage.pace) {
+        // Keeping that pace and those coins, spare Bench and Kiln time goes to the level-up.
+        stage.coins = solved.objective;
+        stageJson = JSON.stringify(stage);
+        problem = JSON.parse(exact_problem(payload, stageJson));
+        const stocked = await solveModel(problem);
+        if (!stocked) throw new Error('no plan found for the level-up stock');
+        solved = stocked;
+        proven &&= stocked.proven;
     }
     const json = exact_plan(payload, stageJson, JSON.stringify({ values: solved.values, proven, bound }));
     const plan = JSON.parse(json);

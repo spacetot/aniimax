@@ -617,6 +617,12 @@ function levelUpInput() {
     };
 }
 
+// A per-second rate as a per-hour figure, with a decimal when it's small.
+function perHour(perSecond) {
+    const hourly = perSecond * 3600;
+    return hourly < 10 ? hourly.toFixed(1) : formatNumber(Math.round(hourly));
+}
+
 // "2d 4h", "5h 12m", "12m": how long until a level-up is covered.
 function formatDuration(seconds) {
     const minutes = Math.ceil(seconds / 60);
@@ -673,7 +679,7 @@ function renderLevelUp(plan) {
             <td>${ITEM_NAMES[r.name] || prettyItem(r.name)}</td>
             <td>${formatNumber(r.need)}</td>
             <td>${formatNumber(r.have)}</td>
-            <td>${formatNumber(Math.round(r.per_second * 3600))}</td>
+            <td>${perHour(r.per_second)}</td>
             <td>${ready}</td>
         </tr>`;
     }).join('');
@@ -681,6 +687,7 @@ function renderLevelUp(plan) {
     // in while the slowest one finishes.
     const surplus = report.requirements
         .map(r => ({ name: r.name, spare: Math.floor(r.have + r.per_second * report.seconds - r.need) }))
+        .concat((report.leftovers || []).map(([name, amount]) => ({ name, spare: Math.floor(amount) })))
         .filter(r => r.spare >= 1)
         .map(r => `${formatNumber(r.spare)} ${r.name === 'coins' ? 'coins' : ITEM_NAMES[r.name] || prettyItem(r.name)}`);
     const coinsNote = surplus.length
@@ -692,6 +699,37 @@ function renderLevelUp(plan) {
             <tbody>${rows}</tbody>
         </table>
         ${coinsNote}`;
+}
+
+// What each product sold earns in a level-up plan, per hour and by the time the level-up is
+// ready. (Most coins plans show this in the goal card instead.)
+function renderProfitBreakdown(plan) {
+    const card = document.getElementById('profit-card');
+    const report = plan.level_up;
+    const streams = (plan.income_streams || []).filter(s => s.units_per_second > 0);
+    if (!report || streams.length === 0) {
+        card.style.display = 'none';
+        return;
+    }
+    card.style.display = 'block';
+    const total = streams.reduce((sum, s) => sum + s.rate_per_second, 0);
+    const rows = [...streams]
+        .sort((a, b) => b.rate_per_second - a.rate_per_second)
+        .map(s => `<tr>
+            <td data-label="Product">${prettyItem(s.item_name)}</td>
+            <td data-label="Facility">${s.facility}</td>
+            <td data-label="Sold per hour">${perHour(s.units_per_second)}</td>
+            <td data-label="Profit per hour">${formatNumber(Math.round(s.rate_per_second * 3600))}</td>
+            <td data-label="Share">${total > 0 ? Math.round(s.rate_per_second / total * 100) : 0}%</td>
+            <td data-label="By the level-up">${formatNumber(Math.floor(s.rate_per_second * report.seconds))}</td>
+        </tr>`).join('');
+    document.getElementById('profit-breakdown').innerHTML = `
+        <div class="table-wrapper">
+            <table class="facility-plan-table">
+                <thead><tr><th>Product</th><th>Facility</th><th>Sold per hour</th><th>Profit per hour</th><th>Share</th><th>By the level-up</th></tr></thead>
+                <tbody>${rows}</tbody>
+            </table>
+        </div>`;
 }
 
 // Get plan-level input values from the form (facilities/modules/prioritize-byproducts, nothing
@@ -1435,6 +1473,7 @@ function displayPlan(plan, scroll = true) {
     }
 
     renderLevelUp(plan);
+    renderProfitBreakdown(plan);
     renderFacilityPlan(plan);
     renderAniimoSummary(plan);
 

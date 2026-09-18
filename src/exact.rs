@@ -59,6 +59,9 @@ pub struct ExactEnvironment {
 pub struct ExactPlan {
     /// Coins (or other target currency) per second.
     pub rate_per_second: f64,
+    /// The goal's value: the same as `rate_per_second` when earning, otherwise the most of a
+    /// byproduct per second or the level-up pace.
+    pub objective: f64,
     /// No plan can earn more than this: the same as `rate_per_second` once proven optimal.
     pub upper_bound: f64,
     /// `true` if the search finished, so `rate_per_second` is the best possible.
@@ -90,6 +93,10 @@ pub enum Goal<'a> {
     /// The most currency per second while keeping up at least `pace` level-ups per day: the
     /// fastest level-up, earning as much as it leaves room for.
     EarnWhileLevelingUp(&'a LevelUp, f64),
+    /// With the pace and coins per second both kept, the most extra of what the level-up costs
+    /// (each as a share of its cost): spare Bench and Kiln time processes whatever the level-up
+    /// doesn't need yet, instead of leaving it raw.
+    StockUp(&'a LevelUp, f64, f64),
 }
 
 /// What an RV level-up costs and what's already in stock, as `(item, amount)` with `"coins"` for
@@ -151,6 +158,8 @@ enum VarKind<'a> {
     Units(&'a ProductionItem),
     Sold(&'a str),
     Pace,
+    /// Made beyond what the level-up needs, of one of its costs.
+    Extra,
     Environment { building: &'a str, mode: &'a str, types: Vec<&'a str>, option: CoverageOption },
 }
 
@@ -161,6 +170,8 @@ type Constraint = (Vec<(usize, f64)>, ComparisonOp, f64);
 /// search can rebuild its relaxation with its own bounds.
 struct Model<'a> {
     objective: Vec<f64>,
+    /// Currency per second per unit of each variable, whatever the objective is.
+    earnings: Vec<f64>,
     bounds: Vec<(f64, f64)>,
     integer: Vec<bool>,
     /// Branching order for whole-unit variables, lowest first: environment buildings, then
@@ -229,6 +240,7 @@ fn build_model<'a>(
         .collect();
     let mut model = Model {
         objective: Vec::new(),
+        earnings: Vec::new(),
         bounds: Vec::new(),
         integer: Vec::new(),
         priority: Vec::new(),
@@ -271,19 +283,26 @@ fn build_model<'a>(
             }
         }
     }
+    // Every variable added from here on earns nothing.
+    model.earnings = model.objective.clone();
     // A level-up: stock and cost per unit of pace, in coins and in every item they name.
     let level_up = match goal {
         Goal::LevelUp(level_up) => Some((level_up, 0.0)),
-        Goal::EarnWhileLevelingUp(level_up, pace) => Some((level_up, pace * (1.0 - 1e-6))),
+        Goal::EarnWhileLevelingUp(level_up, pace) | Goal::StockUp(level_up, pace, _) => Some((level_up, pace * (1.0 - 1e-6))),
         _ => None,
     };
     if let Some((level_up, min_pace)) = level_up {
         let pace = model.add(0.0, (min_pace.min(MAX_PACE), MAX_PACE), false, VarKind::Pace);
         let per_pace = |name: &str| (LevelUp::amount(&level_up.stock, name) - LevelUp::amount(&level_up.cost, name)) / PACE_UNIT;
-        let mut earned: Vec<(usize, f64)> =
-            model.objective.iter().enumerate().filter(|(_, c)| **c != 0.0).map(|(v, c)| (v, *c)).collect();
+        let coin_terms: Vec<(usize, f64)> =
+            model.earnings.iter().enumerate().filter(|(_, c)| **c != 0.0).map(|(v, c)| (v, *c)).collect();
+        let mut earned = coin_terms.clone();
         earned.push((pace, per_pace(currency)));
         model.constrain(earned, ComparisonOp::Ge, 0.0);
+        if let Goal::StockUp(_, _, coins) = goal {
+            // A hair of slack: `coins` is another solve's exact maximum.
+            model.constrain(coin_terms, ComparisonOp::Ge, coins - 1e-6 * coins.abs().max(1.0));
+        }
         for (name, _) in level_up.cost.iter().chain(&level_up.stock) {
             if name != currency {
                 balance.entry(name.as_str()).or_default();
@@ -295,9 +314,22 @@ fn build_model<'a>(
                 terms.push((pace, net));
             }
         }
-        if let Goal::LevelUp(_) = goal {
-            model.objective.iter_mut().for_each(|c| *c = 0.0);
-            model.objective[pace] = 1.0;
+        match goal {
+            Goal::LevelUp(_) => {
+                model.objective.iter_mut().for_each(|c| *c = 0.0);
+                model.objective[pace] = 1.0;
+            }
+            Goal::StockUp(..) => {
+                model.objective.iter_mut().for_each(|c| *c = 0.0);
+                for (name, need) in &level_up.cost {
+                    if let Some(terms) = balance.get_mut(name.as_str()).filter(|_| *need > 0.0) {
+                        // Per day, as a share of the cost: comparable across costs.
+                        let extra = model.add(PACE_UNIT / need, (0.0, f64::INFINITY), false, VarKind::Extra);
+                        terms.push((extra, -1.0));
+                    }
+                }
+            }
+            _ => {}
         }
     }
     for terms in balance.into_values() {
@@ -396,7 +428,7 @@ fn build_model<'a>(
                 model.objective[v] += amount;
             }
         }
-        Goal::LevelUp(_) | Goal::EarnWhileLevelingUp(..) => {}
+        Goal::LevelUp(_) | Goal::EarnWhileLevelingUp(..) | Goal::StockUp(..) => {}
     }
     model
 }
@@ -671,7 +703,8 @@ fn plan_from(model: &Model, value: f64, upper_bound: f64, proven_optimal: bool, 
     }
     // Units set to a recipe that doesn't run are just idle.
     units.retain(|name, _| recipe_rates.contains_key(name));
-    ExactPlan { rate_per_second: value, upper_bound, proven_optimal, nodes, recipe_rates, units, sold, environment, pace }
+    let rate_per_second = model.earnings.iter().zip(values).map(|(c, v)| c * v).sum();
+    ExactPlan { rate_per_second, objective: value, upper_bound, proven_optimal, nodes, recipe_rates, units, sold, environment, pace }
 }
 
 /// Re-checks an [`ExactPlan`] from scratch, independently of the solver: whole units, owned units

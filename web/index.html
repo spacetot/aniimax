@@ -185,6 +185,12 @@
                         <p class="plan-unverified" id="plan-unverified" style="display: none;"></p>
                     </div>
 
+                    <div class="card production-steps" id="profit-card" style="display: none;">
+                        <h2>Profit by product</h2>
+                        <p class="hint">Net of seed costs. "By the level-up" is what each earns before the level-up is ready.</p>
+                        <div id="profit-breakdown"></div>
+                    </div>
+
                     <div class="card production-steps">
                         <h2>What each facility should do</h2>
                         <details class="explain">
@@ -297,7 +303,7 @@
             </div>
             <div class="modal-body">
                 <h3>The Exact Planner</h3>
-                <p>The whole problem is solved at once as a mixed-integer program: every recipe gets a rate and a whole number of plots or machines set to it, everything made must cover what other recipes use plus what's sold, each facility can't use more units than you own (at a high enough level for each recipe), and each environment building runs one mode covering one mix of plots. The objective is coins per second from everything sold, minus seed costs. For a level-up, it's first how many level-ups a day the plan could keep up, counting what you already have, and then the most coins at that pace; the Woodworking Bench and Chimney Kiln take turns between tiers, since each tier is made from the one below. The <a href="https://highs.dev" target="_blank" rel="noopener">HiGHS</a> solver either proves its plan is the best possible, which the results say, or reports how close it got. Every plan is re-checked independently before it's shown; if the exact planner can't run, the steps below make the plan instead.</p>
+                <p>The whole problem is solved at once as a mixed-integer program: every recipe gets a rate and a whole number of plots or machines set to it, everything made must cover what other recipes use plus what's sold, each facility can't use more units than you own (at a high enough level for each recipe), and each environment building runs one mode covering one mix of plots. The objective is coins per second from everything sold, minus seed costs. For a level-up, it's first how many level-ups a day the plan could keep up, counting what you already have, then the most coins at that pace, then as much extra of the level-up items as spare Bench and Kiln time allows; the Woodworking Bench and Chimney Kiln take turns between tiers, since each tier is made from the one below. The <a href="https://highs.dev" target="_blank" rel="noopener">HiGHS</a> solver either proves its plan is the best possible, which the results say, or reports how close it got. Every plan is re-checked independently before it's shown; if the exact planner can't run, the steps below make the plan instead.</p>
 
                 <h3>1. Profit per Item</h3>
                 <p>For every item, we compute net profit per batch and the time to make one, tracing its full ingredient chain back to whatever facilities produce the raw materials.</p>

@@ -221,7 +221,7 @@ The web app builds the whole problem as one mixed-integer program (`src/exact.rs
 - **Growing environments.** Each Heat Furnace, Cooling Unit and Sunlamp runs one mode and one coverage mix, from every undominated way one building can cover Farmland, Woodland and the rest (worked out once by exact packing); a crop needing an environment needs its plots covered.
 - **Byproducts.** Wood Blocks and Mineral Sand balance like any other item, so the Woodworking Bench and Chimney Kiln can use them. Their recipes (level-up materials) take turns on the same unit instead of getting whole units each.
 - **Objective.** Coins/sec from everything sold, minus seed costs. With byproducts prioritized, the most of each byproduct is found first and the plan must keep making that much.
-- **Level-up.** The most level-ups per day ("pace") the plan could keep up: coins earned plus `pace x stock` must cover `pace x cost` for coins and every item, which stays linear. A second solve then finds the most coins at that pace.
+- **Level-up.** The most level-ups per day ("pace") the plan could keep up: coins earned plus `pace x stock` must cover `pace x cost` for coins and every item, which stays linear. A second solve then finds the most coins at that pace, and a third puts spare Bench and Kiln time into more of what the level-up costs, so e.g. plentiful Mineral Sand ends up as ore rather than sitting raw.
 
 HiGHS either proves its plan optimal, which the page reports, or stops at a time limit and reports how far from optimal it could be. Before a plan is shown, the whole-unit counts are re-solved with `microlp` and every limit is re-checked independently (`check_plan`); if anything fails, the page falls back to the heuristic planner below.
 
