@@ -3,7 +3,7 @@
 //! where worked out by hand, earns exactly what the arithmetic in the comments says.
 
 use aniimax::data::{load_all_data, load_aniimo_requirements};
-use aniimax::exact::{check_plan, solve_exact, to_production_plan, ExactPlan, Goal};
+use aniimax::exact::{check_plan, net_rates, solve_exact, to_production_plan, ExactPlan, Goal, LevelUp, PACE_UNIT};
 use aniimax::models::{AniimoSetup, FacilityCounts, ModuleLevels, ProductionItem};
 use aniimax::optimizer::find_production_plan;
 use std::path::Path;
@@ -19,7 +19,7 @@ fn solve_and_check(items: &[ProductionItem], counts: &FacilityCounts, modules: &
     let plan = solve_exact(items, "coins", counts, modules, Goal::Earn { floors: &[] }, Some(Duration::from_secs(60)), None)
         .expect("exact plan");
     assert!(plan.proven_optimal, "not proven optimal: {plan:?}");
-    let recomputed = check_plan(&plan, items, "coins", counts, modules).expect("plan passes its re-check");
+    let recomputed = check_plan(&plan, items, "coins", counts, modules, None).expect("plan passes its re-check");
     assert!((recomputed - plan.rate_per_second).abs() < 1e-6);
     let heuristic = find_production_plan(items, "coins", counts, modules, false).map_or(0.0, |p| p.rate_per_second);
     assert!(
@@ -112,4 +112,95 @@ fn exact_keeps_prioritized_byproducts_at_their_maximum() {
     assert!(made >= most.rate_per_second * (1.0 - 1e-5), "made {made}, most {}", most.rate_per_second);
     let unfloored = solve_exact(&items, "coins", &counts, &modules, Goal::Earn { floors: &[] }, None, None).unwrap();
     assert!(plan.rate_per_second <= unfloored.rate_per_second + 1e-9);
+}
+
+fn level_up(cost: &[(&str, f64)], stock: &[(&str, f64)]) -> LevelUp {
+    let list = |l: &[(&str, f64)]| l.iter().map(|(n, a)| (n.to_string(), *a)).collect();
+    LevelUp { cost: list(cost), stock: list(stock) }
+}
+
+/// Solves a level-up in both stages and checks the plan: the soonest level-up, then the most
+/// coins at that pace. Returns the plan and the level-up time in seconds.
+fn solve_level_up(items: &[ProductionItem], counts: &FacilityCounts, level_up: &LevelUp) -> (ExactPlan, f64) {
+    let modules = ModuleLevels::default();
+    let fastest = solve_exact(items, "coins", counts, &modules, Goal::LevelUp(level_up), None, None).expect("level-up plan");
+    assert!(fastest.proven_optimal && fastest.rate_per_second > 0.0);
+    let pace = fastest.rate_per_second;
+    let plan = solve_exact(items, "coins", counts, &modules, Goal::EarnWhileLevelingUp(level_up, pace), None, None)
+        .expect("earning plan");
+    assert!(plan.proven_optimal);
+    assert!(plan.pace.unwrap() >= pace * (1.0 - 1e-5), "pace {:?} below {pace}", plan.pace);
+    check_plan(&plan, items, "coins", counts, &modules, Some(level_up)).expect("plan passes its re-check");
+    (plan, PACE_UNIT / pace)
+}
+
+// With the items already in stock, a level-up is only coins: the time is the coins still needed
+// over the best coin rate.
+#[test]
+fn exact_level_up_with_items_in_stock_is_only_coins() {
+    let Some(items) = load_items() else { return };
+    let counts = FacilityCounts::only(&[("Farmland", 6, 2), ("Woodland", 3, 2), ("Mine", 2, 2)]);
+    let best = solve_exact(&items, "coins", &counts, &ModuleLevels::default(), Goal::Earn { floors: &[] }, None, None).unwrap();
+    let cost = [("coins", 69000.0), ("rough_lumber", 290.0), ("coarse_sifted_ore", 360.0)];
+    let stock = [("coins", 9000.0), ("rough_lumber", 300.0), ("coarse_sifted_ore", 400.0)];
+    let (plan, seconds) = solve_level_up(&items, &counts, &level_up(&cost, &stock));
+    let expected = 60000.0 / best.rate_per_second;
+    assert!((seconds - expected).abs() < 1e-4 * expected, "took {seconds}s, expected {expected}s");
+    assert!((plan.rate_per_second - best.rate_per_second).abs() < 1e-6);
+}
+
+// The items come from Wood Blocks and Mineral Sand through the Woodworking Bench and Chimney
+// Kiln, so the plan must run them, and has to give up some coins to make the byproducts.
+#[test]
+fn exact_level_up_makes_its_items_from_byproducts() {
+    let Some(items) = load_items() else { return };
+    let counts = FacilityCounts::only(&[
+        ("Farmland", 6, 2),
+        ("Woodland", 3, 2),
+        ("Mine", 2, 2),
+        ("Woodworking Bench", 1, 1),
+        ("Chimney Kiln", 1, 1),
+    ]);
+    let cost = level_up(&[("coins", 69000.0), ("rough_lumber", 290.0), ("coarse_sifted_ore", 360.0)], &[]);
+    let (plan, seconds) = solve_level_up(&items, &counts, &cost);
+    assert!(plan.units.contains_key("rough_lumber") && plan.units.contains_key("coarse_sifted_ore"), "{plan:?}");
+    let net = net_rates(&plan, &items);
+    assert!(net["rough_lumber"] * seconds >= 290.0 * (1.0 - 1e-5));
+    assert!(net["coarse_sifted_ore"] * seconds >= 360.0 * (1.0 - 1e-5));
+    assert!(plan.rate_per_second * seconds >= 69000.0 * (1.0 - 1e-5));
+
+    // Wood Blocks in stock cut the time.
+    let stocked = level_up(&[("coins", 69000.0), ("rough_lumber", 290.0), ("coarse_sifted_ore", 360.0)], &[("wood_block", 2320.0)]);
+    let (_, sooner) = solve_level_up(&items, &counts, &stocked);
+    assert!(sooner < seconds, "{sooner}s with Wood Blocks in stock, {seconds}s without");
+
+    // Without the Bench the items can't be made at all.
+    let no_bench = FacilityCounts::only(&[("Farmland", 6, 2), ("Woodland", 3, 2), ("Mine", 2, 2), ("Chimney Kiln", 1, 1)]);
+    let fastest = solve_exact(&items, "coins", &no_bench, &ModuleLevels::default(), Goal::LevelUp(&cost), None, None).unwrap();
+    assert!(fastest.rate_per_second < 1e-9, "pace {} without a Bench", fastest.rate_per_second);
+}
+
+// Standard Planks are made from Rough Lumber on the same Woodworking Bench, so with one Bench the
+// two recipes take turns on it.
+#[test]
+fn exact_level_up_takes_turns_on_one_bench() {
+    let Some(items) = load_items() else { return };
+    let counts = FacilityCounts::only(&[
+        ("Farmland", 6, 2),
+        ("Woodland", 3, 2),
+        ("Mine", 2, 2),
+        ("Woodworking Bench", 1, 2),
+        ("Chimney Kiln", 1, 2),
+    ]);
+    let cost = level_up(&[("coins", 680000.0), ("standard_planks", 320.0), ("sintered_ore_brick", 350.0)], &[]);
+    let (plan, _) = solve_level_up(&items, &counts, &cost);
+    for name in ["rough_lumber", "standard_planks", "coarse_sifted_ore", "sintered_ore_brick"] {
+        assert_eq!(plan.units.get(name), Some(&1), "{name}: {plan:?}");
+    }
+    let shown = to_production_plan(&plan, &items, "coins", &counts);
+    let planks = shown.coin_items.iter().find(|s| s.item_name.as_deref() == Some("standard_planks")).unwrap();
+    assert!(planks.reason.contains("takes turns with rough_lumber"), "{}", planks.reason);
+    let bench_busy: f64 =
+        shown.coin_items.iter().filter(|s| s.facility == "Woodworking Bench").filter_map(|s| s.busy_units).sum();
+    assert!(bench_busy <= 1.0 + 1e-6, "Bench busy {bench_busy}");
 }

@@ -18,8 +18,9 @@ Updated for the full release, with a joint LP-based facility-allocation engine f
 - **Goal Timing**: Add a target amount afterward to see how long it'll take; updates instantly as you type, no re-solving
 - **Proven Best Plans**: The web app solves the whole problem exactly (every recipe, whole plots and machines, and environment building layouts together) with the [HiGHS](https://highs.dev) solver, and says when a plan is proven to be the best possible for your facilities
 - **Joint Facility Allocation**: Solves for every item and every facility at once, so shared resources (e.g. two recipes both wanting the same Farmland soybean supply) are split correctly instead of double-counted
-- **Whole-Unit Realism**: Growers are rounded to whole plots, processors are dedicated to one recipe each, matching how the game actually works, never a fractional or time-shared facility
-- **Byproduct Priority**: Optionally guarantee the maximum Wood Blocks/Mineral Sand rate first, even at some cost to Coins
+- **Whole-Unit Realism**: Growers are rounded to whole plots and processors are dedicated to one recipe each, matching how the game actually works; only the Woodworking Bench and Chimney Kiln take turns between tiers, since each tier is made from the one below
+- **Level-Up Strategy**: Plans the soonest next RV level-up (coins plus the Woodworking Bench and Chimney Kiln items it costs), counting what you already have, then earns as many coins as that pace allows; RV 7 to 20
+- **Byproduct Priority**: With the Most coins strategy, optionally guarantee the maximum Wood Blocks/Mineral Sand rate first, even at some cost to Coins
 - **Recipe Reference Page**: Every recipe in the game data, browsable by facility, independent of what you own
 - **Aniimo Recommendations**: Every plan is solved twice, for the Best Aniimo (level 3 with the facility's personality bonus everywhere) and the Minimum (the lowest ability level each recipe accepts), and lists the Aniimo team it needs: each ability, level and personality, and how many it takes to keep up with the work (Farmland and Woodland jobs included), checked against how many Aniimo your RV level allows; times follow measured in-game speeds (108 workload takes 108s at level 1, 36s at level 2, 27s at level 3; the personality bonus makes it 20% faster)
 - **Item Upgrade Modules**: Support for module-unlocked items (Ecological, Kitchen, Resource Detector, Crafting)
@@ -218,7 +219,9 @@ The web app builds the whole problem as one mixed-integer program (`src/exact.rs
 - **Item balances.** Everything made covers what other recipes use plus what's sold. A quick variant makes the same item as the regular one, and any leftover sells.
 - **Facilities.** Each facility's units add up to at most what's owned, counting only units at a high enough level for each recipe.
 - **Growing environments.** Each Heat Furnace, Cooling Unit and Sunlamp runs one mode and one coverage mix, from every undominated way one building can cover Farmland, Woodland and the rest (worked out once by exact packing); a crop needing an environment needs its plots covered.
+- **Byproducts.** Wood Blocks and Mineral Sand balance like any other item, so the Woodworking Bench and Chimney Kiln can use them. Their recipes (level-up materials) take turns on the same unit instead of getting whole units each.
 - **Objective.** Coins/sec from everything sold, minus seed costs. With byproducts prioritized, the most of each byproduct is found first and the plan must keep making that much.
+- **Level-up.** The most level-ups per day ("pace") the plan could keep up: coins earned plus `pace x stock` must cover `pace x cost` for coins and every item, which stays linear. A second solve then finds the most coins at that pace.
 
 HiGHS either proves its plan optimal, which the page reports, or stops at a time limit and reports how far from optimal it could be. Before a plan is shown, the whole-unit counts are re-solved with `microlp` and every limit is re-checked independently (`check_plan`); if anything fails, the page falls back to the heuristic planner below.
 
@@ -616,8 +619,9 @@ Production data is stored in CSV files in the `data/` directory:
 - `blazing_stove.csv` - Cooked dishes and sweets
 - `pickling_jar.csv` - Sauces, vinegars and candied fruit
 - `joy_wheel_loom.csv` - Thread, yarn and fabric
+- `woodworking_bench.csv`, `chimney_kiln.csv` - RV level-up materials from Wood Blocks and Mineral Sand (no sale value)
 
-Farmland, Woodland, Mine, Well, Tidewhisper Sandcastle, Carousel Mill, Crafting Table, Claw Game Cooker, Jukebox Dryer and Simmering Pot are verified in game. The other nine facilities' recipes haven't been checked in game yet: `data/unverified.csv` lists them, the recipe list marks each one, and a plan lists any it relies on.
+Farmland, Woodland, Mine, Well, Tidewhisper Sandcastle, Dewy House, Carousel Mill, Crafting Table, Claw Game Cooker, Jukebox Dryer, Simmering Pot, Phonolfactory Table, Bouncy Brew Keg, Woodworking Bench and Chimney Kiln are verified in game. The other six facilities' recipes haven't been checked in game yet: `data/unverified.csv` lists them, the recipe list marks each one, and a plan lists any it relies on.
 
 ### Adding New Items
 

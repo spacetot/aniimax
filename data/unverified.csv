@@ -1,33 +1,4 @@
 name, facility
-bamboo_joss_stick, Phonolfactory Table
-rose_incense, Phonolfactory Table
-cherry_incense, Phonolfactory Table
-lavender_incense, Phonolfactory Table
-lemon_incense, Phonolfactory Table
-advanced_lemon_incense, Phonolfactory Table
-herbal_ginseng_aroma, Phonolfactory Table
-soap, Phonolfactory Table
-premium_soap, Phonolfactory Table
-orange_flower_incense, Phonolfactory Table
-mixed_perfume, Phonolfactory Table
-lotion, Phonolfactory Table
-premium_mixed_perfume, Phonolfactory Table
-wheat_tea, Bouncy Brew Keg
-toasted_rice_green_tea, Bouncy Brew Keg
-potato_kvass, Bouncy Brew Keg
-strawberry_juice, Bouncy Brew Keg
-apple_juice, Bouncy Brew Keg
-sugarcane_juice, Bouncy Brew Keg
-grape_juice, Bouncy Brew Keg
-ginseng_water, Bouncy Brew Keg
-grape_lemon_drink, Bouncy Brew Keg
-walnut_milk, Bouncy Brew Keg
-cranberry_juice, Bouncy Brew Keg
-coconut_cooler, Bouncy Brew Keg
-agave_drink, Bouncy Brew Keg
-hot_cocoa, Bouncy Brew Keg
-coconut_cocoa, Bouncy Brew Keg
-orange_flower_dew, Bouncy Brew Keg
 soy_sauce_fried_rice, Blazing Stove
 creamy_potato_soup, Blazing Stove
 cherry_blossom_rice_ball, Blazing Stove
@@ -60,8 +31,6 @@ cotton_fabric, Joy Wheel Loom
 palm_rope, Joy Wheel Loom
 wool_fabric, Joy Wheel Loom
 dyed_cotton_fabric, Joy Wheel Loom
-aromathyst, Dewy House
-quick_aromathyst, Dewy House
 wool, Nimbus Bed
 quick_wool, Nimbus Bed
 petals, Nimbus Bed

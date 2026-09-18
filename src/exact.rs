@@ -5,14 +5,20 @@
 //! - Every available recipe `r` gets a rate `b_r` (batches/sec) and a whole number of units
 //!   `u_r` set to it (plots for a crop, machines for a processed item): `b_r * t_r <= u_r`, where
 //!   `t_r` is the recipe's time per batch. A unit makes one thing and is left running, so units
-//!   are never shared between recipes.
+//!   are never shared between recipes. The exception is level-up materials (see [`takes_turns`]):
+//!   one Woodworking Bench has to make each tier in turn, so its recipes share its time.
 //! - Every item balances: what's made covers what recipes use plus what's sold. A quick variant
 //!   (e.g. `quick_wheat`) makes the same item as the regular one (`wheat`).
 //! - Each facility's units per recipe add up to at most what's owned, counting only units at a
 //!   high enough level for each recipe.
 //! - A crop that needs a growing environment needs its plots covered: each environment building
 //!   runs one mode and one coverage mix (see [`crate::coverage::single_building_options`]).
-//! - The objective is coins/sec from everything sold, minus seed costs.
+//! - Woodland and Mine byproducts (Wood Blocks, Mineral Sand) balance like any other item, so the
+//!   Woodworking Bench and Chimney Kiln can use them.
+//! - The objective is coins/sec from everything sold, minus seed costs. For an RV level-up
+//!   ([`Goal::LevelUp`]) it's the pace instead: level-ups per day, where making the coins and
+//!   items it costs, on top of what's already in stock, takes a day per level-up. Stock enters each
+//!   balance as `pace * stock`, and the cost as `-pace * cost`, which keeps the model linear.
 //!
 //! ## Search
 //! Branch and bound over the whole-unit variables, with each node's continuous relaxation solved
@@ -27,7 +33,7 @@ use std::time::{Duration, Instant};
 use microlp::{ComparisonOp, OptimizationDirection, Problem};
 
 use crate::coverage::{facility_footprint, single_building_options, CoverageOption, ENVIRONMENT_GATED_FACILITIES};
-use crate::models::{FacilityCounts, ModuleLevels, ProductionItem};
+use crate::models::{byproduct_item, FacilityCounts, ModuleLevels, ProductionItem};
 
 /// Environment buildings and the modes each can run.
 const ENVIRONMENT_BUILDINGS: &[(&str, &[&str])] = &[
@@ -66,6 +72,8 @@ pub struct ExactPlan {
     /// Units/sec sold of each item.
     pub sold: BTreeMap<String, f64>,
     pub environment: Vec<ExactEnvironment>,
+    /// Level-ups per day, for a level-up goal (see [`PACE_UNIT`]).
+    pub pace: Option<f64>,
 }
 
 /// What a plan optimizes.
@@ -77,7 +85,42 @@ pub enum Goal<'a> {
     /// The most of one byproduct per second (e.g. `"Wood Blocks"`), ignoring currency: how high
     /// that byproduct's floor can go.
     MostOf(&'a str),
+    /// The soonest RV level-up: the most level-ups per day (see [`PACE_UNIT`]).
+    LevelUp(&'a LevelUp),
+    /// The most currency per second while keeping up at least `pace` level-ups per day: the
+    /// fastest level-up, earning as much as it leaves room for.
+    EarnWhileLevelingUp(&'a LevelUp, f64),
 }
+
+/// What an RV level-up costs and what's already in stock, as `(item, amount)` with `"coins"` for
+/// coins, e.g. cost `[("coins", 69000.0), ("rough_lumber", 290.0), ("coarse_sifted_ore", 360.0)]`.
+/// Stock can hold anything, including Wood Blocks and Mineral Sand (`wood_block`, `mineral_sand`)
+/// or a lower tier the Bench or Kiln can still turn into what's needed.
+#[derive(Debug, Clone, Default, serde::Deserialize)]
+pub struct LevelUp {
+    pub cost: Vec<(String, f64)>,
+    #[serde(default)]
+    pub stock: Vec<(String, f64)>,
+}
+
+impl LevelUp {
+    fn amount(list: &[(String, f64)], name: &str) -> f64 {
+        list.iter().filter(|(n, _)| n == name).map(|(_, a)| a).sum()
+    }
+
+    /// Whether the stock already covers the whole cost.
+    pub fn ready(&self) -> bool {
+        self.cost.iter().all(|(name, amount)| Self::amount(&self.stock, name) >= *amount)
+    }
+}
+
+/// Seconds per unit of pace: a pace of 1 is one level-up per day. Keeps the pace variable near 1
+/// rather than near 1e-6, where a solver's absolute tolerances would swamp it.
+pub const PACE_UNIT: f64 = 86_400.0;
+
+/// The highest pace the model allows (a level-up every second), so a level-up the stock already
+/// covers doesn't leave the model unbounded.
+const MAX_PACE: f64 = PACE_UNIT;
 
 /// Every byproduct any recipe makes (e.g. `"Wood Blocks"`, `"Mineral Sand"`), sorted.
 pub fn byproducts(items: &[ProductionItem]) -> Vec<String> {
@@ -85,6 +128,13 @@ pub fn byproducts(items: &[ProductionItem]) -> Vec<String> {
     names.sort_unstable();
     names.dedup();
     names
+}
+
+/// Whether a recipe shares its facility's time with the facility's other recipes instead of getting
+/// whole units of its own: level-up materials (sold for nothing), since each tier is made from the
+/// one below on the same Woodworking Bench or Chimney Kiln.
+pub fn takes_turns(recipe: &ProductionItem) -> bool {
+    recipe.sell_currency == "none"
 }
 
 /// The item a recipe makes: a quick variant makes the regular item.
@@ -100,6 +150,7 @@ enum VarKind<'a> {
     Rate(&'a ProductionItem),
     Units(&'a ProductionItem),
     Sold(&'a str),
+    Pace,
     Environment { building: &'a str, mode: &'a str, types: Vec<&'a str>, option: CoverageOption },
 }
 
@@ -191,7 +242,7 @@ fn build_model<'a>(
     for &recipe in &recipes {
         let rate = model.add(-recipe.cost.unwrap_or(0.0), (0.0, f64::INFINITY), false, VarKind::Rate(recipe));
         let max = facility_counts.get_count(&recipe.facility) as f64;
-        let units = model.add(0.0, (0.0, max), true, VarKind::Units(recipe));
+        let units = model.add(0.0, (0.0, max), !takes_turns(recipe), VarKind::Units(recipe));
         model.constrain(vec![(rate, recipe.production_time), (units, -1.0)], ComparisonOp::Le, 0.0);
         rate_of.push((recipe, rate));
         units_of.push((recipe, units));
@@ -201,6 +252,11 @@ fn build_model<'a>(
     let mut balance: BTreeMap<&str, Vec<(usize, f64)>> = BTreeMap::new();
     for &(recipe, rate) in &rate_of {
         balance.entry(made_item(&recipe.name, &all)).or_default().push((rate, recipe.yield_amount as f64));
+        if let Some((resource, amount)) = &recipe.byproduct {
+            if let Some(item) = byproduct_item(resource) {
+                balance.entry(item).or_default().push((rate, *amount as f64));
+            }
+        }
         if let (Some(inputs), Some(amounts)) = (&recipe.raw_materials, &recipe.required_amount) {
             for (input, &amount) in inputs.iter().zip(amounts) {
                 balance.entry(input.as_str()).or_default().push((rate, -(amount as f64)));
@@ -213,6 +269,35 @@ fn build_model<'a>(
                 let sold = model.add(item.sell_value, (0.0, f64::INFINITY), false, VarKind::Sold(item.name.as_str()));
                 terms.push((sold, -1.0));
             }
+        }
+    }
+    // A level-up: stock and cost per unit of pace, in coins and in every item they name.
+    let level_up = match goal {
+        Goal::LevelUp(level_up) => Some((level_up, 0.0)),
+        Goal::EarnWhileLevelingUp(level_up, pace) => Some((level_up, pace * (1.0 - 1e-6))),
+        _ => None,
+    };
+    if let Some((level_up, min_pace)) = level_up {
+        let pace = model.add(0.0, (min_pace.min(MAX_PACE), MAX_PACE), false, VarKind::Pace);
+        let per_pace = |name: &str| (LevelUp::amount(&level_up.stock, name) - LevelUp::amount(&level_up.cost, name)) / PACE_UNIT;
+        let mut earned: Vec<(usize, f64)> =
+            model.objective.iter().enumerate().filter(|(_, c)| **c != 0.0).map(|(v, c)| (v, *c)).collect();
+        earned.push((pace, per_pace(currency)));
+        model.constrain(earned, ComparisonOp::Ge, 0.0);
+        for (name, _) in level_up.cost.iter().chain(&level_up.stock) {
+            if name != currency {
+                balance.entry(name.as_str()).or_default();
+            }
+        }
+        for (&name, terms) in &mut balance {
+            let net = per_pace(name);
+            if net != 0.0 {
+                terms.push((pace, net));
+            }
+        }
+        if let Goal::LevelUp(_) = goal {
+            model.objective.iter_mut().for_each(|c| *c = 0.0);
+            model.objective[pace] = 1.0;
         }
     }
     for terms in balance.into_values() {
@@ -311,6 +396,7 @@ fn build_model<'a>(
                 model.objective[v] += amount;
             }
         }
+        Goal::LevelUp(_) | Goal::EarnWhileLevelingUp(..) => {}
     }
     model
 }
@@ -556,10 +642,16 @@ fn plan_from(model: &Model, value: f64, upper_bound: f64, proven_optimal: bool, 
     let mut units = BTreeMap::new();
     let mut sold = BTreeMap::new();
     let mut environment = Vec::new();
+    let mut pace = None;
     for (kind, &v) in model.kinds.iter().zip(values) {
         match kind {
+            VarKind::Pace => pace = Some(v),
             VarKind::Rate(recipe) if v > 1e-9 => {
                 recipe_rates.insert(recipe.name.clone(), v);
+            }
+            VarKind::Units(recipe) if takes_turns(recipe) && v > 1e-9 => {
+                // The units it runs on at least part of the time.
+                units.insert(recipe.name.clone(), ((v - 1e-6).ceil().max(1.0)) as u32);
             }
             VarKind::Units(recipe) if v > 0.5 => {
                 units.insert(recipe.name.clone(), v.round() as u32);
@@ -579,25 +671,27 @@ fn plan_from(model: &Model, value: f64, upper_bound: f64, proven_optimal: bool, 
     }
     // Units set to a recipe that doesn't run are just idle.
     units.retain(|name, _| recipe_rates.contains_key(name));
-    ExactPlan { rate_per_second: value, upper_bound, proven_optimal, nodes, recipe_rates, units, sold, environment }
+    ExactPlan { rate_per_second: value, upper_bound, proven_optimal, nodes, recipe_rates, units, sold, environment, pace }
 }
 
 /// Re-checks an [`ExactPlan`] from scratch, independently of the solver: whole units, owned units
-/// per facility and level, item balances, and environment coverage, then recomputes its earnings.
-/// Returns the recomputed coins/sec, or what's wrong.
+/// per facility and level, item balances, environment coverage and, for a level-up, its pace,
+/// then recomputes its earnings. Returns the recomputed coins/sec, or what's wrong.
 pub fn check_plan(
     plan: &ExactPlan,
     items: &[ProductionItem],
     currency: &str,
     facility_counts: &FacilityCounts,
     module_levels: &ModuleLevels,
+    level_up: Option<&LevelUp>,
 ) -> Result<f64, String> {
     const TOLERANCE: f64 = 1e-6;
     let all: HashMap<&str, &ProductionItem> = items.iter().map(|i| (i.name.as_str(), i)).collect();
     let mut earned = 0.0;
     let mut made: HashMap<&str, f64> = HashMap::new();
     let mut plots_needing: HashMap<(&str, &str), u32> = HashMap::new();
-    let mut units_at: HashMap<&str, Vec<(u32, u32)>> = HashMap::new();
+    // Units in use per facility and level; a recipe taking turns counts only its share of time.
+    let mut units_at: HashMap<&str, Vec<(u32, f64)>> = HashMap::new();
     for (name, &rate) in &plan.recipe_rates {
         let recipe = all.get(name.as_str()).ok_or(format!("unknown recipe {name}"))?;
         if !facility_counts.can_produce(&recipe.facility, recipe.facility_level) {
@@ -612,11 +706,15 @@ pub fn check_plan(
         if rate * recipe.production_time > units as f64 + TOLERANCE {
             return Err(format!("{name} runs {rate}/s but has {units} units at {}s each", recipe.production_time));
         }
-        units_at.entry(recipe.facility.as_str()).or_default().push((recipe.facility_level, units));
+        let in_use = if takes_turns(recipe) { rate * recipe.production_time } else { units as f64 };
+        units_at.entry(recipe.facility.as_str()).or_default().push((recipe.facility_level, in_use));
         if let Some(environment) = recipe.environment.as_deref() {
             *plots_needing.entry((recipe.facility.as_str(), environment)).or_default() += units;
         }
         *made.entry(made_item(&recipe.name, &all)).or_default() += rate * recipe.yield_amount as f64;
+        if let Some(item) = recipe.byproduct.as_ref().and_then(|(resource, _)| byproduct_item(resource)) {
+            *made.entry(item).or_default() += rate * recipe.byproduct.as_ref().map_or(0.0, |(_, a)| *a as f64);
+        }
         if let (Some(inputs), Some(amounts)) = (&recipe.raw_materials, &recipe.required_amount) {
             for (input, &amount) in inputs.iter().zip(amounts) {
                 *made.entry(input.as_str()).or_default() -= rate * amount as f64;
@@ -632,6 +730,21 @@ pub fn check_plan(
         *made.entry(item.name.as_str()).or_default() -= sold;
         earned += sold * item.sell_value;
     }
+    if let Some(level_up) = level_up {
+        let pace = plan.pace.ok_or("the plan has no level-up pace")?;
+        let per_second = |name: &str| pace * (LevelUp::amount(&level_up.stock, name) - LevelUp::amount(&level_up.cost, name)) / PACE_UNIT;
+        for (name, _) in level_up.cost.iter().chain(&level_up.stock) {
+            if name != currency {
+                made.entry(name.as_str()).or_default();
+            }
+        }
+        for (name, left) in made.iter_mut() {
+            *left += per_second(name);
+        }
+        if earned + per_second(currency) < -TOLERANCE * earned.abs().max(1.0) {
+            return Err(format!("earns {earned}/s, too little for a level-up every {} s", PACE_UNIT / pace));
+        }
+    }
     for (item, left) in &made {
         if *left < -TOLERANCE {
             return Err(format!("{item} is used or sold faster than it's made (short {:.6}/s)", -left));
@@ -639,9 +752,9 @@ pub fn check_plan(
     }
     for (facility, entries) in &units_at {
         for &(level, _) in entries {
-            let needed: u32 = entries.iter().filter(|(l, _)| *l >= level).map(|(_, u)| u).sum();
+            let needed: f64 = entries.iter().filter(|(l, _)| *l >= level).map(|(_, u)| u).sum();
             let owned = facility_counts.capacity_at_level(facility, level);
-            if needed > owned {
+            if needed > owned as f64 + TOLERANCE {
                 return Err(format!("{facility}: {needed} units at level {level}+ but {owned} owned"));
             }
         }
@@ -727,12 +840,12 @@ pub fn plan_from_values(
     currency: &str,
     facility_counts: &FacilityCounts,
     module_levels: &ModuleLevels,
-    floors: &[(String, f64)],
+    goal: Goal,
     values: &[f64],
     proven_optimal: bool,
     upper_bound: f64,
 ) -> Option<ExactPlan> {
-    let model = build_model(items, currency, facility_counts, module_levels, Goal::Earn { floors });
+    let model = build_model(items, currency, facility_counts, module_levels, goal);
     if values.len() != model.objective.len() {
         return None;
     }
@@ -752,6 +865,32 @@ pub fn plan_from_values(
         .collect();
     let (value, solved) = model.relax(&fixed)?;
     Some(plan_from(&model, value, upper_bound.max(value), proven_optimal, 0, &solved, value))
+}
+
+/// Each item's rate per second made, less what the plan's recipes use and sell, including Wood
+/// Blocks and Mineral Sand (as `wood_block` and `mineral_sand`). Negative for an item drawn from
+/// stock.
+pub fn net_rates(exact: &ExactPlan, items: &[ProductionItem]) -> BTreeMap<String, f64> {
+    let all: HashMap<&str, &ProductionItem> = items.iter().map(|i| (i.name.as_str(), i)).collect();
+    let mut net: BTreeMap<String, f64> = BTreeMap::new();
+    for (name, &rate) in &exact.recipe_rates {
+        let Some(recipe) = all.get(name.as_str()) else { continue };
+        *net.entry(made_item(name, &all).to_string()).or_default() += rate * recipe.yield_amount as f64;
+        if let Some((resource, amount)) = &recipe.byproduct {
+            if let Some(item) = byproduct_item(resource) {
+                *net.entry(item.to_string()).or_default() += rate * *amount as f64;
+            }
+        }
+        if let (Some(inputs), Some(amounts)) = (&recipe.raw_materials, &recipe.required_amount) {
+            for (input, &amount) in inputs.iter().zip(amounts) {
+                *net.entry(input.clone()).or_default() -= rate * amount as f64;
+            }
+        }
+    }
+    for (name, &sold) in &exact.sold {
+        *net.entry(name.clone()).or_default() -= sold;
+    }
+    net
 }
 
 /// Turns an [`ExactPlan`] into the [`crate::models::ProductionPlan`] the rest of the app shows:
@@ -780,9 +919,13 @@ pub fn to_production_plan(
         uses.sort_unstable();
         uses.dedup();
         let sells = exact.sold.get(made).is_some_and(|&s| s > 1e-9);
-        match (uses.is_empty(), sells) {
+        // Made but neither sold nor all used up: kept for the level-up.
+        let kept = exact.pace.is_some() && !sells && net_rates(exact, items).get(made).is_some_and(|&n| n > 1e-9);
+        match (uses.is_empty(), sells || kept) {
+            (true, _) if kept => "For the level-up".to_string(),
             (true, _) => "Sells directly".to_string(),
             (false, false) => format!("Used for {}", uses.join(", ")),
+            (false, true) if kept => format!("Used for {}; the rest goes to the level-up", uses.join(", ")),
             (false, true) => format!("Used for {}; the rest sells directly", uses.join(", ")),
         }
     };
@@ -819,14 +962,26 @@ pub fn to_production_plan(
             });
             continue;
         }
-        let used: u32 = rows.iter().map(|(_, u, _)| u).sum();
+        // Recipes taking turns share units, so what's in use is their combined time.
+        let shared: Vec<&str> = rows.iter().filter(|(r, _, _)| takes_turns(r)).map(|(r, _, _)| r.name.as_str()).collect();
+        let shared_time: f64 = rows.iter().filter(|(r, _, _)| takes_turns(r)).map(|(r, _, rate)| rate * r.production_time).sum();
+        let used: u32 = rows.iter().filter(|(r, _, _)| !takes_turns(r)).map(|(_, u, _)| u).sum::<u32>()
+            + ((shared_time - 1e-6).ceil().max(0.0) as u32);
+        let used = used.min(owned);
         for (recipe, units, rate) in rows {
+            let mut reason = uses_of(recipe);
+            if takes_turns(recipe) {
+                let others: Vec<&str> = shared.iter().copied().filter(|n| *n != recipe.name).collect();
+                if !others.is_empty() {
+                    reason = format!("{reason}; takes turns with {}", others.join(", "));
+                }
+            }
             coin_items.push(PlanStep {
                 item_name: Some(recipe.name.clone()),
                 facility: facility.to_string(),
                 facility_count: units,
                 status: PlanStepStatus::Producing,
-                reason: uses_of(recipe),
+                reason,
                 is_grower: grower,
                 cycle_time: grower.then_some(recipe.production_time),
                 environment: if grower { recipe.environment.clone() } else { None },

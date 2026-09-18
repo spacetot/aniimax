@@ -3,6 +3,7 @@
 import {
     FACILITIES, FACILITY_CATEGORIES, FACILITY_CATEGORY_BY_NAME,
     MAX_HOME_LEVEL, COUNTS_CONFIRMED_UP_TO, ANIIMO_MAX, simpleSetup,
+    LEVEL_UP_COSTS, LEVEL_UP_CHAINS,
 } from './facility-config.js';
 
 let wasmReady = false;
@@ -287,6 +288,7 @@ function getPersistedFieldIds() {
     return [
         'target-amount', 'current-amount',
         'prioritize-byproducts',
+        'strategy-level-up', 'strategy-coins', 'level-up-target',
         'mode-simple', 'mode-advanced', 'home-level',
         'ecological-module-level', 'kitchen-module-level',
         'resource-detector-level', 'crafting-module-level',
@@ -345,7 +347,7 @@ function initFacilityTiers(data) {
 }
 
 function saveInputsToStorage() {
-    const data = { facilityTiers };
+    const data = { facilityTiers, levelUpStock };
     getPersistedFieldIds().forEach(id => {
         const el = document.getElementById(id);
         if (!el) return;
@@ -360,6 +362,7 @@ function saveInputsToStorage() {
 
 function loadInputsFromStorage(data) {
     if (!data) return;
+    if (data.levelUpStock && typeof data.levelUpStock === 'object') levelUpStock = { ...data.levelUpStock };
     getPersistedFieldIds().forEach(id => {
         if (!(id in data)) return;
         const el = document.getElementById(id);
@@ -469,6 +472,7 @@ function applyConfigMode() {
     document.getElementById('simple-config').style.display = simple ? 'block' : 'none';
     document.getElementById('advanced-config').style.display = simple ? 'none' : 'block';
     if (simple) renderSimpleSummary();
+    renderStrategy();
 }
 
 // Copies the simple-mode setup into the advanced inputs and switches to advanced mode, so the
@@ -492,8 +496,192 @@ function customizeInAdvancedMode() {
 function attachModeHandlers() {
     document.getElementById('mode-simple').addEventListener('change', applyConfigMode);
     document.getElementById('mode-advanced').addEventListener('change', applyConfigMode);
-    document.getElementById('home-level').addEventListener('change', renderSimpleSummary);
+    document.getElementById('home-level').addEventListener('change', () => {
+        renderSimpleSummary();
+        renderStrategy();
+    });
     document.getElementById('customize-btn').addEventListener('click', customizeInAdvancedMode);
+}
+
+// --- Strategy ----------------------------------------------------------------------------
+// "Level up" plans the soonest next RV level-up (its coins plus a Woodworking Bench item and a
+// Chimney Kiln item, less what's already in stock); "Most coins" plans the most coins.
+
+// What the player has toward a level-up, by item name ('coins' for coins).
+let levelUpStock = {};
+
+const ITEM_NAMES = {
+    coins: 'Coins',
+    wood_block: 'Wood Blocks',
+    mineral_sand: 'Mineral Sand',
+    coarse_sifted_ore: 'Coarse-Sifted Ore',
+};
+
+function isLevelUpStrategy() {
+    return document.getElementById('strategy-level-up').checked;
+}
+
+// The RV level being worked toward: the next one in simple mode, the picked one in advanced.
+function levelUpTarget() {
+    if (isSimpleMode()) return selectedHomeLevel() + 1;
+    return numberOrDefault(document.getElementById('level-up-target').value, 7);
+}
+
+// The target's cost, or null if it isn't known.
+function levelUpCost() {
+    return LEVEL_UP_COSTS[levelUpTarget()] || null;
+}
+
+// Why the level-up can't be planned, or null if it can.
+function levelUpUnavailable() {
+    const target = levelUpTarget();
+    if (target > MAX_HOME_LEVEL) return `RV ${MAX_HOME_LEVEL} is the top level, so there's no level-up to plan.`;
+    if (!LEVEL_UP_COSTS[target]) return `Level-up costs are only known from RV 7 on.`;
+    return null;
+}
+
+// Everything worth counting toward `cost`: coins, and each chain up to the tier it needs.
+function stockNames(cost) {
+    const names = ['coins'];
+    cost.items.forEach(([item]) => {
+        const chain = LEVEL_UP_CHAINS.find(c => c.includes(item));
+        if (chain) names.push(...chain.slice(0, chain.indexOf(item) + 1));
+    });
+    return names;
+}
+
+function stockAmount(name) {
+    const amount = Number(levelUpStock[name]);
+    return Number.isFinite(amount) && amount > 0 ? amount : 0;
+}
+
+function populateLevelUpTargets() {
+    const select = document.getElementById('level-up-target');
+    select.innerHTML = Object.keys(LEVEL_UP_COSTS).map(level => `<option value="${level}">${level}</option>`).join('');
+}
+
+function renderStrategy() {
+    const levelUp = isLevelUpStrategy();
+    document.getElementById('level-up-config').style.display = levelUp ? 'block' : 'none';
+    document.getElementById('coins-config').style.display = levelUp ? 'none' : 'block';
+    if (!levelUp) return;
+
+    const select = document.getElementById('level-up-target');
+    select.disabled = isSimpleMode();
+    if (isSimpleMode() && LEVEL_UP_COSTS[levelUpTarget()]) select.value = String(levelUpTarget());
+
+    const costEl = document.getElementById('level-up-cost');
+    const stockDetails = document.getElementById('level-up-stock');
+    const unavailable = levelUpUnavailable();
+    if (unavailable) {
+        costEl.innerHTML = `<p class="level-up-note">${unavailable} Plans will go for the most coins.</p>`;
+        stockDetails.style.display = 'none';
+        return;
+    }
+    const cost = levelUpCost();
+    const chip = (amount, name) => `<div class="chip"><span><span class="chip-count">${formatNumber(amount)}</span> ${ITEM_NAMES[name] || prettyItem(name)}</span></div>`;
+    costEl.innerHTML = `
+        <p class="assume-title">RV ${levelUpTarget()} costs</p>
+        <div class="chip-grid">${chip(cost.coins, 'coins')}${cost.items.map(([item, n]) => chip(n, item)).join('')}</div>`;
+    stockDetails.style.display = '';
+    document.getElementById('level-up-stock-grid').innerHTML = stockNames(cost).map(name => `
+        <div class="input-field">
+            <label for="stock-${name}">${ITEM_NAMES[name] || prettyItem(name)}</label>
+            <input type="number" id="stock-${name}" data-stock="${name}" min="0" value="${stockAmount(name)}">
+        </div>`).join('');
+}
+
+function attachStrategyHandlers() {
+    document.getElementById('strategy-level-up').addEventListener('change', renderStrategy);
+    document.getElementById('strategy-coins').addEventListener('change', renderStrategy);
+    document.getElementById('level-up-target').addEventListener('change', renderStrategy);
+    const grid = document.getElementById('level-up-stock-grid');
+    grid.addEventListener('input', (e) => {
+        const name = e.target.dataset.stock;
+        if (!name) return;
+        levelUpStock[name] = Math.max(0, floatOrDefault(e.target.value, 0));
+        saveInputsToStorage();
+    });
+    grid.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter' && e.target.matches('input')) runFindPlan();
+    });
+}
+
+// The level-up the solver should plan for (see `JsPlanInput::level_up` in wasm.rs), or null.
+function levelUpInput() {
+    if (!isLevelUpStrategy() || levelUpUnavailable()) return null;
+    const cost = levelUpCost();
+    return {
+        cost: [['coins', cost.coins], ...cost.items],
+        stock: stockNames(cost).filter(name => stockAmount(name) > 0).map(name => [name, stockAmount(name)]),
+    };
+}
+
+// "2d 4h", "5h 12m", "12m": how long until a level-up is covered.
+function formatDuration(seconds) {
+    const minutes = Math.ceil(seconds / 60);
+    const days = Math.floor(minutes / 1440);
+    const hours = Math.floor((minutes % 1440) / 60);
+    const mins = minutes % 60;
+    if (days > 0) return `${days}d ${hours}h`;
+    if (hours > 0) return `${hours}h ${mins}m`;
+    return `${mins}m`;
+}
+
+// What the plans on screen were asked for, so they're described against the right target even
+// after the inputs change.
+let planContext = null;
+
+// The level-up card: how soon the plan covers the target's cost, one line per cost.
+function renderLevelUp(plan) {
+    const card = document.getElementById('level-up-card');
+    const context = planContext;
+    if (!context || !context.levelUp) {
+        card.style.display = 'none';
+        return;
+    }
+    card.style.display = 'block';
+    const label = document.getElementById('level-up-label');
+    const time = document.getElementById('level-up-time');
+    const lines = document.getElementById('level-up-lines');
+    label.textContent = `RV ${context.target} level-up`;
+    const report = plan.level_up;
+    if (context.unavailable) {
+        time.textContent = '-';
+        lines.innerHTML = `<p class="level-up-note">${context.unavailable} This plan is for the most coins.</p>`;
+        return;
+    }
+    if (context.ready) {
+        time.textContent = 'Ready now';
+        lines.innerHTML = `<p class="level-up-note">You already have everything it costs. This plan is for the most coins.</p>`;
+        return;
+    }
+    if (!report) {
+        const why = plan.level_up_note === 'unreachable'
+            ? `These facilities can't make everything it costs.`
+            : `The level-up couldn't be planned.`;
+        time.textContent = '-';
+        lines.innerHTML = `<p class="level-up-note">${why} This plan is for the most coins.</p>`;
+        return;
+    }
+    time.textContent = `in ${formatDuration(report.seconds)}`;
+    const slowest = Math.max(...report.requirements.map(r => r.seconds ?? Infinity));
+    const rows = report.requirements.map(r => {
+        const ready = r.seconds === null ? 'never' : r.seconds === 0 ? 'have it' : formatDuration(r.seconds);
+        const isSlowest = r.seconds !== null && r.seconds > 0 && r.seconds >= slowest * (1 - 1e-6);
+        return `<tr${isSlowest ? ' class="slowest"' : ''}>
+            <td>${ITEM_NAMES[r.name] || prettyItem(r.name)}</td>
+            <td>${formatNumber(r.need)}</td>
+            <td>${formatNumber(r.have)}</td>
+            <td>${formatNumber(Math.round(r.per_second * 3600))}</td>
+            <td>${ready}</td>
+        </tr>`;
+    }).join('');
+    lines.innerHTML = `
+        <table class="level-up-lines">
+            <thead><tr><th>Cost</th><th>Need</th><th>Have</th><th>Per hour</th><th>Ready in</th></tr></thead>
+            <tbody>${rows}</tbody>
+        </table>`;
 }
 
 // Get plan-level input values from the form (facilities/modules/prioritize-byproducts, nothing
@@ -507,7 +695,8 @@ function getPlanInputValues() {
         const { facilities, modules } = simpleSetup(selectedHomeLevel());
         return {
             currency: 'coins',
-            prioritize_byproducts: document.getElementById('prioritize-byproducts').checked,
+            prioritize_byproducts: !isLevelUpStrategy() && document.getElementById('prioritize-byproducts').checked,
+            level_up: levelUpInput(),
             facilities,
             modules
         };
@@ -530,7 +719,8 @@ function getPlanInputValues() {
 
     return {
         currency: 'coins',
-        prioritize_byproducts: document.getElementById('prioritize-byproducts').checked,
+        prioritize_byproducts: !isLevelUpStrategy() && document.getElementById('prioritize-byproducts').checked,
+        level_up: levelUpInput(),
         facilities,
         modules
     };
@@ -542,6 +732,7 @@ function getPlanInputValues() {
 // "quick_aromathyst" -> "Quick Aromathyst": the data uses snake_case names.
 function prettyItem(name) {
     if (!name) return name;
+    if (ITEM_NAMES[name]) return ITEM_NAMES[name];
     return name.split('_').map(w => w ? w[0].toUpperCase() + w.slice(1) : w).join(' ');
 }
 
@@ -549,7 +740,10 @@ function prettyItem(name) {
 // rest sells directly" -> "Used for Dried Strawberries, Jam; the rest sells directly".
 function prettyReason(reason) {
     if (!reason) return reason;
-    return reason.replace(/^Used for ([^;]+)/, (_, list) => 'Used for ' + list.split(', ').map(prettyItem).join(', '));
+    const names = list => list.split(', ').map(prettyItem).join(', ');
+    return reason
+        .replace(/^Used for ([^;]+)/, (_, list) => 'Used for ' + names(list))
+        .replace(/takes turns with ([^;]+)$/, (_, list) => 'takes turns with ' + names(list));
 }
 
 // Keys ("Facility|item") of the shown plan's rows that rely on recipes not yet checked in game;
@@ -1201,13 +1395,16 @@ function displayPlan(plan, scroll = true) {
 
     errorEl.style.display = 'none';
     resultsContent.style.display = 'block';
-    goalSection.style.display = 'block';
+    // A level-up plan's own card says how long it takes; the goal is for coin plans.
+    goalSection.style.display = plan.level_up ? 'none' : 'block';
 
     updateRateDisplay();
     updateCurrencyLabels(plan.currency);
 
     const explored = document.getElementById('plan-explored-hint');
-    if (plan.proven_optimal === true) {
+    if (plan.proven_optimal === true && plan.level_up) {
+        explored.innerHTML = `<span class="badge">✓ Proven best plan</span>No other plan gets RV ${planContext.target} sooner or earns more on the way, for the game data we have.`;
+    } else if (plan.proven_optimal === true) {
         explored.innerHTML = '<span class="badge">✓ Proven best plan</span>No other use of these facilities earns more, for the game data we have.';
     } else if (plan.proven_optimal === false && plan.upper_bound > 0) {
         const gap = Math.max(0, (plan.upper_bound - plan.rate_per_second) / plan.upper_bound * 100);
@@ -1227,6 +1424,7 @@ function displayPlan(plan, scroll = true) {
         unverifiedEl.style.display = 'none';
     }
 
+    renderLevelUp(plan);
     renderFacilityPlan(plan);
     renderAniimoSummary(plan);
 
@@ -1283,6 +1481,12 @@ async function runFindPlan() {
     if (pendingWorkerRequests.size > 0) restartWorker();
     try {
         const input = getPlanInputValues();
+        planContext = {
+            levelUp: isLevelUpStrategy(),
+            target: levelUpTarget(),
+            unavailable: levelUpUnavailable(),
+            ready: !!(input.level_up && input.level_up.cost.every(([name, need]) => stockAmount(name) >= need)),
+        };
 
         // Runs in the worker (see worker.js); the main thread stays free to paint the progress
         // bar above for however long this takes, instead of freezing. `onTrialProgress` receives
@@ -1507,10 +1711,12 @@ document.addEventListener('DOMContentLoaded', () => {
     initFacilityTiers(savedData);
     renderFacilityCards();
     populateHomeLevels();
+    populateLevelUpTargets();
     loadInputsFromStorage(savedData);
     attachAutoSave();
     attachFacilityTierHandlers();
     attachModeHandlers();
+    attachStrategyHandlers();
     applyConfigMode();
     initWasm();
 
@@ -1538,7 +1744,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // once at startup wouldn't reach a tier added later).
     document.querySelectorAll('input').forEach(input => {
         if (input.id === 'target-amount' || input.id === 'current-amount') return;
-        if (input.closest('#facilities-grid')) return;
+        if (input.closest('#facilities-grid') || input.closest('#level-up-stock-grid')) return;
         input.addEventListener('keypress', (e) => {
             if (e.key === 'Enter') {
                 runFindPlan();

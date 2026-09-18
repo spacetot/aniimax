@@ -6,6 +6,15 @@
 use serde::Deserialize;
 use std::collections::HashSet;
 
+/// Each byproduct and the item name recipes use for it: the Woodworking Bench takes
+/// `wood_block`, the Chimney Kiln `mineral_sand`.
+pub const BYPRODUCT_ITEMS: [(&str, &str); 2] = [("Wood Blocks", "wood_block"), ("Mineral Sand", "mineral_sand")];
+
+/// The item name recipes use for a byproduct (see [`BYPRODUCT_ITEMS`]).
+pub fn byproduct_item(resource: &str) -> Option<&'static str> {
+    BYPRODUCT_ITEMS.iter().find(|(r, _)| *r == resource).map(|(_, item)| *item)
+}
+
 /// Represents a single production item that can be produced in the game.
 ///
 /// This includes both raw materials (from Farmland, Woodland, Mine)
@@ -64,9 +73,9 @@ pub struct ProductionItem {
     /// Aniimo until [`Workers::apply`] sets the one for the player's own Aniimo.
     pub workload: Option<f64>,
     /// Secondary byproduct yielded alongside the main product: (resource_name, amount).
-    /// E.g. Woodland yields Wood Blocks, Mine yields Mineral Sand. These are
-    /// progression resources (Homeland/RV upgrades), not currency, so they are not folded
-    /// into the profit optimizer; informational only.
+    /// E.g. Woodland yields Wood Blocks, Mine yields Mineral Sand. These are progression
+    /// resources for RV level-ups: they aren't sold, but the Woodworking Bench and Chimney Kiln
+    /// process them (as the items named in [`BYPRODUCT_ITEMS`]).
     pub byproduct: Option<(String, u32)>,
     /// Growing environment this item needs to be planted (e.g. "Cool", "Warm", "Freeze",
     /// "Scorching", "Adequate"), or `None` if it has no environment requirement. Only ever

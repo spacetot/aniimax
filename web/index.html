@@ -93,12 +93,38 @@
                     </div>
                 </div>
 
-                <div class="option-row checkbox-field">
-                    <label>
-                        <input type="checkbox" id="prioritize-byproducts" checked>
-                        Prioritize Wood Blocks and Mineral Sand
-                    </label>
-                    <span class="info-icon" data-tooltip="Make as much Wood Blocks and Mineral Sand as possible first, then as many coins as that allows. Leave unticked to go purely for coins.">?</span>
+                <div class="strategy">
+                    <h3>Strategy</h3>
+                    <div class="tabs" role="radiogroup" aria-label="Strategy">
+                        <label><input type="radio" name="strategy" id="strategy-level-up" value="level-up" checked> Level up</label>
+                        <label><input type="radio" name="strategy" id="strategy-coins" value="coins"> Most coins</label>
+                    </div>
+
+                    <div id="level-up-config">
+                        <p class="hint">Gets the coins, Woodworking Bench item and Chimney Kiln item for your next RV level as soon as possible, then earns as many coins as that leaves room for.</p>
+                        <div class="input-row">
+                            <div class="input-field">
+                                <label for="level-up-target">Level up to RV</label>
+                                <select id="level-up-target"></select>
+                            </div>
+                        </div>
+                        <div id="level-up-cost"></div>
+                        <details class="explain" id="level-up-stock">
+                            <summary>What you already have</summary>
+                            <p class="hint small">Counts toward the level-up. Wood Blocks, Mineral Sand and lower tiers get processed up.</p>
+                            <div class="stock-grid" id="level-up-stock-grid"></div>
+                        </details>
+                    </div>
+
+                    <div id="coins-config" style="display: none;">
+                        <div class="checkbox-field">
+                            <label>
+                                <input type="checkbox" id="prioritize-byproducts" checked>
+                                Prioritize Wood Blocks and Mineral Sand
+                            </label>
+                            <span class="info-icon" data-tooltip="Make as much Wood Blocks and Mineral Sand as possible first, then as many coins as that allows. Leave unticked to go purely for coins.">?</span>
+                        </div>
+                    </div>
                 </div>
 
                 <button id="optimize-btn" class="optimize-btn">
@@ -137,6 +163,12 @@
                             </details>
                             <div id="aniimo-summary"></div>
                         </div>
+                    </div>
+
+                    <div class="card level-up-card" id="level-up-card" style="display: none;">
+                        <span class="summary-label" id="level-up-label">Level-up</span>
+                        <div class="summary-value" id="level-up-time">-</div>
+                        <div id="level-up-lines"></div>
                     </div>
 
                     <div class="card rate-card">
@@ -265,7 +297,7 @@
             </div>
             <div class="modal-body">
                 <h3>The Exact Planner</h3>
-                <p>The whole problem is solved at once as a mixed-integer program: every recipe gets a rate and a whole number of plots or machines set to it, everything made must cover what other recipes use plus what's sold, each facility can't use more units than you own (at a high enough level for each recipe), and each environment building runs one mode covering one mix of plots. The objective is coins per second from everything sold, minus seed costs. The <a href="https://highs.dev" target="_blank" rel="noopener">HiGHS</a> solver either proves its plan is the best possible, which the results say, or reports how close it got. Every plan is re-checked independently before it's shown; if the exact planner can't run, the steps below make the plan instead.</p>
+                <p>The whole problem is solved at once as a mixed-integer program: every recipe gets a rate and a whole number of plots or machines set to it, everything made must cover what other recipes use plus what's sold, each facility can't use more units than you own (at a high enough level for each recipe), and each environment building runs one mode covering one mix of plots. The objective is coins per second from everything sold, minus seed costs. For a level-up, it's first how many level-ups a day the plan could keep up, counting what you already have, and then the most coins at that pace; the Woodworking Bench and Chimney Kiln take turns between tiers, since each tier is made from the one below. The <a href="https://highs.dev" target="_blank" rel="noopener">HiGHS</a> solver either proves its plan is the best possible, which the results say, or reports how close it got. Every plan is re-checked independently before it's shown; if the exact planner can't run, the steps below make the plan instead.</p>
 
                 <h3>1. Profit per Item</h3>
                 <p>For every item, we compute net profit per batch and the time to make one, tracing its full ingredient chain back to whatever facilities produce the raw materials.</p>
@@ -309,11 +341,15 @@
                 <h3>1. Tell it what you've built</h3>
                 <p><strong>Simple</strong>: pick your RV level, and the calculator assumes you've built and upgraded everything that level allows. <strong>Advanced</strong>: set the count and level of every facility and upgrade module yourself. "Customize in Advanced" copies the Simple setup over as a starting point.</p>
 
-                <h3>2. Find the best plan</h3>
-                <p>Click "Find the best plan" to see your best rate and what each facility should make. Ticking "Prioritize Wood Blocks and Mineral Sand" makes as much of those as possible first, then as many coins as that allows.</p>
+                <h3>2. Pick a strategy</h3>
+                <p><strong>Level up</strong> gets everything your next RV level costs as soon as possible: its coins, a Woodworking Bench item and a Chimney Kiln item. Enter what you already have under "What you already have"; Wood Blocks, Mineral Sand and lower tiers count too, since the Bench and Kiln process them up. Once the level-up's pace is set, the plan earns as many coins as it can. Level-up costs are known from RV 7 on.</p>
+                <p><strong>Most coins</strong> goes for coins alone. Ticking "Prioritize Wood Blocks and Mineral Sand" makes as much of those as possible first, then as many coins as that allows.</p>
 
-                <h3>3. Set a goal (optional)</h3>
-                <p>Enter a target amount and your current balance to see how long it will take. This updates instantly as you type.</p>
+                <h3>3. Find the best plan</h3>
+                <p>Click "Find the best plan" to see how long the level-up takes (or your best rate) and what each facility should make.</p>
+
+                <h3>4. Set a goal (optional)</h3>
+                <p>With Most coins, enter a target amount and your current balance to see how long it will take. This updates instantly as you type.</p>
 
                 <h3>Understanding the results</h3>
                 <ul>

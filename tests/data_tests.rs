@@ -89,9 +89,10 @@ fn test_currency_types() {
     let items = load_all_data(data_dir).expect("Failed to load data");
 
     for item in &items {
+        // "none": a level-up material, made only for RV level-ups.
         assert!(
-            item.sell_currency == "coins",
-            "Currency should be 'coins' (the release has no other currency), got: {}",
+            item.sell_currency == "coins" || item.sell_currency == "none",
+            "Currency should be 'coins' or 'none', got: {}",
             item.sell_currency
         );
     }
@@ -113,7 +114,9 @@ fn load_items() -> Option<Vec<aniimax::models::ProductionItem>> {
 #[test]
 fn test_every_ingredient_is_produced_somewhere() {
     let Some(items) = load_items() else { return };
-    let names: std::collections::HashSet<&str> = items.iter().map(|i| i.name.as_str()).collect();
+    let mut names: std::collections::HashSet<&str> = items.iter().map(|i| i.name.as_str()).collect();
+    // Wood Blocks and Mineral Sand come from Woodland and Mine byproducts.
+    names.extend(aniimax::models::BYPRODUCT_ITEMS.iter().map(|(_, item)| *item));
 
     let mut missing: Vec<String> = items
         .iter()
@@ -174,7 +177,8 @@ fn test_item_values_are_in_range() {
 
     for item in &items {
         let name = &item.name;
-        assert!(item.sell_value > 0.0, "{name} has no sell value");
+        let level_up_material = item.sell_currency == "none";
+        assert!(level_up_material || item.sell_value > 0.0, "{name} has no sell value");
         assert!(item.yield_amount > 0, "{name} has no yield");
         assert!(item.production_time > 0.0, "{name} has no grow time or workload");
         assert!((1..=10).contains(&item.facility_level), "{name} has facility level {}", item.facility_level);

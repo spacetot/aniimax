@@ -50,20 +50,34 @@ async function solveModel(problem) {
 // The exact planner (see `exact_problem` in wasm.rs): builds the model in wasm, solves it with
 // HiGHS, and turns the answer back into a plan. With "prioritize byproducts" on, it first finds
 // the most of each byproduct the facilities can make and requires the plan to keep that much.
+// For the level-up strategy, it first finds the soonest level-up and requires the plan to keep
+// that pace; if the facilities can't make the level-up at all, the plan is for coins and says so.
 // Returns the plan's JSON, or throws with the reason it couldn't, so the caller can fall back to
 // `find_plan` and say why.
 async function exactPlanJson(pkg, payload) {
-    const { exact_byproduct_problems, exact_problem, exact_plan } = pkg;
-    const floors = [];
+    const { exact_byproduct_problems, exact_level_up_problem, exact_problem, exact_plan } = pkg;
+    const stage = { floors: [] };
     let allProven = true;
     for (const problem of JSON.parse(exact_byproduct_problems(payload))) {
         const most = await solveModel(problem);
         if (!most) throw new Error(`no plan found for the most ${problem.resource}`);
         allProven &&= most.proven;
-        floors.push([problem.resource, most.objective]);
+        stage.floors.push([problem.resource, most.objective]);
     }
-    const floorsJson = JSON.stringify(floors);
-    const problem = JSON.parse(exact_problem(payload, floorsJson));
+    let levelUpNote = null;
+    const levelUp = JSON.parse(exact_level_up_problem(payload));
+    if (levelUp.lp) {
+        const fastest = await solveModel(levelUp);
+        if (!fastest) throw new Error('no plan found for the level-up');
+        if (fastest.objective > 1e-9) {
+            allProven &&= fastest.proven;
+            stage.pace = fastest.objective;
+        } else {
+            levelUpNote = 'unreachable';
+        }
+    }
+    const stageJson = JSON.stringify(stage);
+    const problem = JSON.parse(exact_problem(payload, stageJson));
     if (!problem.lp) throw new Error('this setup isn\'t covered by the exact planner');
     const solved = await solveModel(problem);
     if (!solved) throw new Error('the solver found no plan');
@@ -74,10 +88,12 @@ async function exactPlanJson(pkg, payload) {
         const relaxed = (await newHighs()).solve(problem.lp.replace(/\nGeneral\n[\s\S]*\nEnd/, '\nEnd'), {});
         bound = relaxed.ObjectiveValue;
     }
-    const json = exact_plan(payload, floorsJson, JSON.stringify({ values: solved.values, proven, bound }));
+    const json = exact_plan(payload, stageJson, JSON.stringify({ values: solved.values, proven, bound }));
     const plan = JSON.parse(json);
     if (!plan.success) throw new Error(plan.error || 'the plan failed its check');
-    return json;
+    if (!levelUpNote) return json;
+    plan.level_up_note = levelUpNote;
+    return JSON.stringify(plan);
 }
 
 self.onmessage = async (event) => {

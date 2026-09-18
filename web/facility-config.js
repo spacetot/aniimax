@@ -14,7 +14,7 @@
 // many of the facility you can place at RV level i + 1; an RV level past the end of the list keeps
 // the last count (the environment buildings' later counts aren't known yet). Simple mode uses both
 // (see `simpleSetup`). Farmland, Woodland and Mine counts come from the game; every other facility
-// is placed once, confirmed up to RV level 6.
+// is placed once, confirmed up to RV level 8.
 //
 // Facilities marked "Not yet verified in game" in their tooltip haven't had their numbers
 // confirmed in game yet.
@@ -40,7 +40,7 @@ export const FACILITIES = [
     {
         name: 'Well', slug: 'well', defaultCount: 0, category: 'Materials', hasWorker: true, ability: 'Water', personality: 'Faithful',
         unlocks: { 1: 4, 2: 8, 3: 11, 4: 13, 5: 17 },
-        counts: [0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+        counts: [0, 0, 0, 1, 1, 1, 1, 2],
         tooltip: "Lv.1: well water, quick well water&#10;Lv.2: fresh water&#10;Lv.3: quick fresh water&#10;Lv.4: deep rock spring water, quick deep rock spring water&#10;Lv.5: natural mineral spring water, quick natural mineral spring water"
     },
     {
@@ -50,10 +50,10 @@ export const FACILITIES = [
         tooltip: "Lv.1: sea salt&#10;Lv.2: quick sea salt&#10;Lv.3: pearl (needs Warm)"
     },
     {
-        name: 'Dewy House', slug: 'dewy-house', defaultCount: 0, category: 'Aniimo Materials', hasWorker: true, ability: 'Leisure',
+        name: 'Dewy House', slug: 'dewy-house', defaultCount: 0, category: 'Aniimo Materials', hasWorker: true, ability: 'Leisure', personality: 'Instinctive',
         unlocks: { 1: 6, 2: 11 },
         counts: [0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
-        tooltip: "Lv.1: aromathyst&#10;Lv.2: quick aromathyst&#10;Not yet verified in game."
+        tooltip: "Lv.1: aromathyst&#10;Lv.2: quick aromathyst"
     },
     {
         name: 'Nimbus Bed', slug: 'nimbus-bed', defaultCount: 0, category: 'Aniimo Materials', hasWorker: true, ability: 'Leisure', personality: 'Judicious',
@@ -122,16 +122,16 @@ export const FACILITIES = [
         tooltip: "Lv.1: plain rice porridge&#10;Lv.2: rose concentrate&#10;Lv.3: rock candy, strawberry jam, maple candy apple jam&#10;Lv.4: chestnut puree, grape jam, ginseng porridge&#10;Lv.5: maple sugar chunk, malt sugar&#10;Lv.6: cocoa spread, cranberry jam, agave syrup"
     },
     {
-        name: 'Phonolfactory Table', slug: 'phonolfactory-table', defaultCount: 0, category: 'Materials Processing', hasWorker: true, ability: 'Perfumery',
+        name: 'Phonolfactory Table', slug: 'phonolfactory-table', defaultCount: 0, category: 'Materials Processing', hasWorker: true, ability: 'Perfumery', personality: 'Instinctive',
         unlocks: { 1: 6, 2: 7, 3: 10, 4: 14, 5: 17, 6: 19 },
         counts: [0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
-        tooltip: "Lv.1: bamboo joss stick&#10;Lv.2: rose incense, cherry incense&#10;Lv.3: lavender incense, lemon incense, advanced lemon incense&#10;Lv.4: herbal ginseng aroma&#10;Lv.5: soap, premium soap&#10;Lv.6: orange flower incense, mixed perfume, lotion, premium mixed perfume&#10;Not yet verified in game."
+        tooltip: "Lv.1: bamboo joss stick&#10;Lv.2: rose incense, cherry incense&#10;Lv.3: lavender incense, lemon incense, advanced lemon incense&#10;Lv.4: herbal ginseng aroma&#10;Lv.5: soap, premium soap&#10;Lv.6: orange flower incense, mixed perfume, lotion, premium mixed perfume"
     },
     {
-        name: 'Bouncy Brew Keg', slug: 'bouncy-brew-keg', defaultCount: 0, category: 'Materials Processing', hasWorker: true, ability: 'Water',
+        name: 'Bouncy Brew Keg', slug: 'bouncy-brew-keg', defaultCount: 0, category: 'Materials Processing', hasWorker: true, ability: 'Water', personality: 'Energetic',
         unlocks: { 1: 6, 2: 9, 3: 13, 4: 17, 5: 19 },
         counts: [0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
-        tooltip: "Lv.1: wheat tea, toasted rice green tea&#10;Lv.2: potato kvass, strawberry juice, apple juice, sugarcane juice&#10;Lv.3: grape juice, ginseng water, grape lemon drink, walnut milk&#10;Lv.4: cranberry juice, coconut cooler&#10;Lv.5: agave drink, hot cocoa, coconut cocoa, orange flower dew&#10;Not yet verified in game."
+        tooltip: "Lv.1: wheat tea, toasted rice green tea&#10;Lv.2: potato kvass, strawberry juice, apple juice, sugarcane juice&#10;Lv.3: grape juice, ginseng water, grape lemon drink, walnut milk&#10;Lv.4: cranberry juice, coconut cooler&#10;Lv.5: agave drink, hot cocoa, coconut cocoa, orange flower dew"
     },
     {
         name: 'Blazing Stove', slug: 'blazing-stove', defaultCount: 0, category: 'Materials Processing', hasWorker: true, ability: 'Fire', personality: 'Nimble',
@@ -151,6 +151,44 @@ export const FACILITIES = [
         counts: [0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
         tooltip: "Lv.1: cotton thread&#10;Lv.2: woolen yarn, cotton fabric&#10;Lv.3: palm rope, wool fabric&#10;Lv.4: dyed cotton fabric&#10;Not yet verified in game."
     },
+    {
+        name: 'Woodworking Bench', slug: 'woodworking-bench', defaultCount: 0, category: 'Materials Processing', hasWorker: true, ability: 'Artisanship', personality: 'Energetic',
+        unlocks: { 1: 6, 2: 10, 3: 14, 4: 18 },
+        counts: [0, 0, 0, 0, 0, 1],
+        tooltip: "Lv.1: rough lumber&#10;Lv.2: standard planks&#10;Lv.3: laminated beams&#10;Lv.4: densified timber component&#10;Turns Wood Blocks into RV level-up materials."
+    },
+    {
+        name: 'Chimney Kiln', slug: 'chimney-kiln', defaultCount: 0, category: 'Materials Processing', hasWorker: true, ability: 'Fire', personality: 'Practical',
+        unlocks: { 1: 6, 2: 10, 3: 14, 4: 18 },
+        counts: [0, 0, 0, 0, 0, 1],
+        tooltip: "Lv.1: coarse-sifted ore&#10;Lv.2: sintered ore brick&#10;Lv.3: refined ore&#10;Lv.4: microcrystalline ore plate&#10;Turns Mineral Sand into RV level-up materials."
+    },
+];
+
+// What reaching each RV level costs: coins plus one Woodworking Bench item and one Chimney Kiln
+// item. Costs below RV 7 aren't known yet.
+export const LEVEL_UP_COSTS = {
+    7: { coins: 69000, items: [['rough_lumber', 290], ['coarse_sifted_ore', 360]] },
+    8: { coins: 180000, items: [['rough_lumber', 1100], ['coarse_sifted_ore', 640]] },
+    9: { coins: 260000, items: [['rough_lumber', 1520], ['coarse_sifted_ore', 800]] },
+    10: { coins: 510000, items: [['rough_lumber', 2000], ['coarse_sifted_ore', 2400]] },
+    11: { coins: 680000, items: [['standard_planks', 320], ['sintered_ore_brick', 350]] },
+    12: { coins: 1060000, items: [['standard_planks', 910], ['sintered_ore_brick', 480]] },
+    13: { coins: 1930000, items: [['standard_planks', 1230], ['sintered_ore_brick', 760]] },
+    14: { coins: 2620000, items: [['standard_planks', 1590], ['sintered_ore_brick', 1060]] },
+    15: { coins: 3760000, items: [['laminated_beams', 390], ['refined_ore', 150]] },
+    16: { coins: 4900000, items: [['laminated_beams', 480], ['refined_ore', 310]] },
+    17: { coins: 8630000, items: [['laminated_beams', 630], ['refined_ore', 380]] },
+    18: { coins: 11600000, items: [['laminated_beams', 800], ['refined_ore', 520]] },
+    19: { coins: 17100000, items: [['densified_timber_component', 400], ['microcrystalline_ore_plate', 220]] },
+    20: { coins: 20800000, items: [['densified_timber_component', 490], ['microcrystalline_ore_plate', 270]] },
+};
+
+// The Woodworking Bench and Chimney Kiln chains, lowest tier first: what a player might have in
+// stock toward a level-up.
+export const LEVEL_UP_CHAINS = [
+    ['wood_block', 'rough_lumber', 'standard_planks', 'laminated_beams', 'densified_timber_component'],
+    ['mineral_sand', 'coarse_sifted_ore', 'sintered_ore_brick', 'refined_ore', 'microcrystalline_ore_plate'],
 ];
 
 // Display order for facility categories. Auxiliary facilities (Storage Unit, power/climate
@@ -183,7 +221,7 @@ function atHomeLevel(list, homeLevel) {
 export const ANIIMO_MAX = [null, 8, 11, 14, 17, 20, 22, 24, 26, 28, 30, 32, 34, 36, 38, 40, 42, 43, 44, 45];
 
 // Highest RV level whose building counts have been confirmed in game.
-export const COUNTS_CONFIRMED_UP_TO = 6;
+export const COUNTS_CONFIRMED_UP_TO = 8;
 
 // Everything a player at `homeLevel` could have: each facility at its highest unlocked level, as
 // many as that RV level allows (see `counts`), and every module at its cap for that RV level. Returns the same shapes simple

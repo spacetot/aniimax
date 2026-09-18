@@ -489,7 +489,7 @@ const ANIIMO_MATERIAL_FILES: [(&str, &str); 5] = [
 ];
 
 /// Processors whose CSVs use the no-energy layout (see [`load_processing_no_energy`]).
-const PROCESSOR_FILES: [(&str, &str); 7] = [
+const PROCESSOR_FILES: [(&str, &str); 9] = [
     ("crafting_table.csv", "Crafting Table"),
     ("simmering_pot.csv", "Simmering Pot"),
     ("phonolfactory_table.csv", "Phonolfactory Table"),
@@ -497,4 +497,6 @@ const PROCESSOR_FILES: [(&str, &str); 7] = [
     ("blazing_stove.csv", "Blazing Stove"),
     ("pickling_jar.csv", "Pickling Jar"),
     ("joy_wheel_loom.csv", "Joy Wheel Loom"),
+    ("woodworking_bench.csv", "Woodworking Bench"),
+    ("chimney_kiln.csv", "Chimney Kiln"),
 ];

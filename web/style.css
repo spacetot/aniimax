@@ -1701,3 +1701,67 @@ details.explain p {
 .ability-dot.small.bonus {
     box-shadow: 0 0 0 1.5px var(--surface-2), 0 0 0 2.75px var(--ability);
 }
+
+/* Strategy: level up or most coins. */
+.strategy {
+    margin: 1.5rem 0 1.25rem;
+    padding-top: 1.25rem;
+    border-top: 1px solid var(--border);
+}
+
+.strategy h3 {
+    margin-bottom: 0.6rem;
+}
+
+#level-up-config .input-field {
+    max-width: 16rem;
+}
+
+#level-up-cost .chip-grid {
+    margin-bottom: 0.75rem;
+}
+
+.stock-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+    gap: 0.6rem 1rem;
+    margin-top: 0.6rem;
+}
+
+.level-up-note {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    margin: 0.5rem 0 0;
+}
+
+/* Results: how soon the level-up is covered. */
+.level-up-card .summary-value {
+    font-size: 2rem;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    color: var(--text);
+}
+
+.level-up-lines {
+    width: 100%;
+    margin-top: 0.75rem;
+    border-collapse: collapse;
+    font-size: 0.85rem;
+}
+
+.level-up-lines th {
+    text-align: left;
+    font-weight: 500;
+    color: var(--text-muted);
+    font-size: 0.75rem;
+    padding: 0.3rem 0.5rem 0.3rem 0;
+}
+
+.level-up-lines td {
+    padding: 0.35rem 0.5rem 0.35rem 0;
+    border-top: 1px solid var(--border);
+}
+
+.level-up-lines .slowest td {
+    font-weight: 600;
+}

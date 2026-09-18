@@ -801,7 +801,7 @@ mod tests {
 
     #[test]
     fn woodland_alone_matches_expected_max() {
-        let positions = best_grid_positions(4.0, None);
+        let positions = best_grid_positions(4.0, None).0;
         assert_eq!(positions.len(), 12, "Woodland's unrestricted best grid should be exactly 12");
     }
 
@@ -834,7 +834,7 @@ mod tests {
             let placements = candidate_placements(name, size);
             // Spot-check the unrestricted grid specifically (a subset of `placements`, but built
             // fresh here so this test doesn't depend on `candidate_positions`'s internal order).
-            let grid = best_grid_positions(size, None);
+            let grid = best_grid_positions(size, None).0;
             for i in 0..grid.len() {
                 for j in (i + 1)..grid.len() {
                     let a = Rect::new(grid[i].0, grid[i].1, size);

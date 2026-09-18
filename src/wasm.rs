@@ -439,6 +439,8 @@ fn get_embedded_items() -> Vec<ProductionItem> {
         ("Blazing Stove", include_str!("../data/blazing_stove.csv")),
         ("Pickling Jar", include_str!("../data/pickling_jar.csv")),
         ("Joy Wheel Loom", include_str!("../data/joy_wheel_loom.csv")),
+        ("Woodworking Bench", include_str!("../data/woodworking_bench.csv")),
+        ("Chimney Kiln", include_str!("../data/chimney_kiln.csv")),
     ] {
         let mut rdr = ReaderBuilder::new()
             .trim(csv::Trim::All)
@@ -693,6 +695,10 @@ pub struct JsPlanInput {
     /// real in-game constraint players can't just buy their way around.
     #[serde(default = "default_true")]
     pub prioritize_byproducts: bool,
+    /// Set for the level-up strategy: the next RV level-up's cost and what's in stock. The exact
+    /// planner then finds the soonest level-up, earning as much as it leaves room for.
+    #[serde(default)]
+    pub level_up: Option<crate::exact::LevelUp>,
 }
 
 impl JsPlanInput {
@@ -1048,6 +1054,31 @@ pub struct JsProductionPlan {
     /// `data/unverified.csv`), so the page can say what its numbers rest on.
     #[serde(default)]
     pub unverified: Vec<JsUnverified>,
+    /// Set for a level-up plan: how long the level-up takes.
+    #[serde(default)]
+    pub level_up: Option<JsLevelUpReport>,
+}
+
+/// How long a level-up plan takes to cover the level-up's cost.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JsLevelUpReport {
+    /// Seconds until everything the level-up costs is in stock.
+    pub seconds: f64,
+    /// One entry per thing the level-up costs.
+    pub requirements: Vec<JsLevelUpRequirement>,
+}
+
+/// One cost of a level-up and how the plan covers it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JsLevelUpRequirement {
+    /// `"coins"` or an item name.
+    pub name: String,
+    pub need: f64,
+    pub have: f64,
+    /// Made per second (for coins, earned).
+    pub per_second: f64,
+    /// Seconds until there's enough; 0 if the stock already covers it, `None` if never.
+    pub seconds: Option<f64>,
 }
 
 fn empty_production_plan(success: bool, error: Option<String>) -> JsProductionPlan {
@@ -1065,6 +1096,7 @@ fn empty_production_plan(success: bool, error: Option<String>) -> JsProductionPl
         proven_optimal: None,
         upper_bound: None,
         unverified: vec![],
+        level_up: None,
     }
 }
 
@@ -1135,7 +1167,7 @@ pub fn find_plan(input_json: &str, on_progress: Option<js_sys::Function>) -> Str
 #[wasm_bindgen]
 pub fn exact_byproduct_problems(input_json: &str) -> String {
     let Ok(prepared) = PreparedInput::from_json(input_json) else { return "[]".to_string() };
-    if !prepared.input.prioritize_byproducts || prepared.input.currency != "coins" {
+    if !prepared.input.prioritize_byproducts || prepared.input.currency != "coins" || prepared.input.level_up.is_some() {
         return "[]".to_string();
     }
     let problems: Vec<serde_json::Value> = crate::exact::byproducts(&prepared.items)
@@ -1154,22 +1186,65 @@ pub fn exact_byproduct_problems(input_json: &str) -> String {
     serde_json::Value::Array(problems).to_string()
 }
 
+/// For the level-up strategy, the model for the soonest level-up (see
+/// [`crate::exact::Goal::LevelUp`]): `{"lp", "variables"}` as in [`exact_problem`]. The caller
+/// solves it and passes the pace it finds (its objective) to [`exact_problem`] and [`exact_plan`].
+/// `lp` is empty for the coins strategy, or when the stock already covers the level-up.
+#[wasm_bindgen]
+pub fn exact_level_up_problem(input_json: &str) -> String {
+    let lp = match PreparedInput::from_json(input_json) {
+        Ok(prepared) => match &prepared.input.level_up {
+            Some(level_up) if prepared.input.currency == "coins" && !level_up.ready() => crate::exact::write_lp(
+                &prepared.items,
+                &prepared.input.currency,
+                &prepared.facility_counts,
+                &prepared.module_levels,
+                crate::exact::Goal::LevelUp(level_up),
+            ),
+            _ => (String::new(), 0),
+        },
+        Err(_) => (String::new(), 0),
+    };
+    serde_json::json!({ "lp": lp.0, "variables": lp.1 }).to_string()
+}
+
+/// What the earlier solves settled, for [`exact_problem`] and [`exact_plan`].
+#[derive(Debug, Clone, Default, Deserialize)]
+struct JsStage {
+    /// `[[byproduct, per second], ...]` from [`exact_byproduct_problems`].
+    #[serde(default)]
+    floors: Vec<(String, f64)>,
+    /// Level-ups per day from [`exact_level_up_problem`].
+    #[serde(default)]
+    pace: Option<f64>,
+}
+
+impl JsStage {
+    fn goal<'a>(&'a self, input: &'a JsPlanInput) -> crate::exact::Goal<'a> {
+        match (&input.level_up, self.pace) {
+            (Some(level_up), Some(pace)) => crate::exact::Goal::EarnWhileLevelingUp(level_up, pace),
+            _ => crate::exact::Goal::Earn { floors: &self.floors },
+        }
+    }
+}
+
 /// The exact planner's model for this input (see [`crate::exact`]), for the caller to solve with
 /// HiGHS and hand back to [`exact_plan`]: `{"lp": <CPLEX LP text>, "variables": <count>}`, where
-/// the variables are `x0` up to `x<count - 1>`. `floors_json` is `[[byproduct, per second], ...]`
-/// (see [`exact_byproduct_problems`]; `[]` if byproducts aren't prioritized). `lp` is empty when
-/// the exact planner doesn't cover the input (a byproduct as the currency), so the caller uses
-/// [`find_plan`] instead.
+/// the variables are `x0` up to `x<count - 1>`. `stage_json` is `{"floors": [[byproduct, per
+/// second], ...], "pace": <level-ups per day>}` from the earlier solves (see
+/// [`exact_byproduct_problems`] and [`exact_level_up_problem`]); either can be left out. `lp` is
+/// empty when the exact planner doesn't cover the input (a byproduct as the currency), so the
+/// caller uses [`find_plan`] instead.
 #[wasm_bindgen]
-pub fn exact_problem(input_json: &str, floors_json: &str) -> String {
-    let floors: Vec<(String, f64)> = serde_json::from_str(floors_json).unwrap_or_default();
+pub fn exact_problem(input_json: &str, stage_json: &str) -> String {
+    let stage: JsStage = serde_json::from_str(stage_json).unwrap_or_default();
     let lp = match PreparedInput::from_json(input_json) {
         Ok(prepared) if prepared.input.currency == "coins" => crate::exact::write_lp(
             &prepared.items,
             &prepared.input.currency,
             &prepared.facility_counts,
             &prepared.module_levels,
-            crate::exact::Goal::Earn { floors: &floors },
+            stage.goal(&prepared.input),
         ),
         _ => (String::new(), 0),
     };
@@ -1190,38 +1265,76 @@ struct JsSolverResult {
 /// Turns HiGHS's solution of [`exact_problem`]'s model into the same result [`find_plan`]
 /// returns, plus whether it's proven optimal.
 #[wasm_bindgen]
-pub fn exact_plan(input_json: &str, floors_json: &str, solution_json: &str) -> String {
+pub fn exact_plan(input_json: &str, stage_json: &str, solution_json: &str) -> String {
     let prepared = match PreparedInput::from_json(input_json) {
         Ok(p) => p,
         Err(error) => return error,
     };
-    let floors: Vec<(String, f64)> = serde_json::from_str(floors_json).unwrap_or_default();
+    let stage: JsStage = serde_json::from_str(stage_json).unwrap_or_default();
     let Ok(result) = serde_json::from_str::<JsSolverResult>(solution_json) else { return no_plan() };
     let currency = prepared.input.currency.clone();
+    let goal = stage.goal(&prepared.input);
+    let level_up = match goal {
+        crate::exact::Goal::EarnWhileLevelingUp(level_up, _) => Some(level_up),
+        _ => None,
+    };
     let Some(exact) = crate::exact::plan_from_values(
         &prepared.items,
         &currency,
         &prepared.facility_counts,
         &prepared.module_levels,
-        &floors,
+        goal,
         &result.values,
         result.proven,
         result.bound,
     ) else {
         return no_plan();
     };
-    if exact.rate_per_second <= 0.0 {
+    if exact.rate_per_second <= 0.0 && level_up.is_none() {
         return no_plan();
     }
     // Independent re-check of every limit before trusting the plan; the caller falls back to the
     // heuristic planner if this ever fails.
-    if let Err(problem) = crate::exact::check_plan(&exact, &prepared.items, &currency, &prepared.facility_counts, &prepared.module_levels) {
+    if let Err(problem) =
+        crate::exact::check_plan(&exact, &prepared.items, &currency, &prepared.facility_counts, &prepared.module_levels, level_up)
+    {
         return serde_json::to_string(&empty_production_plan(false, Some(format!("Exact plan failed its check: {problem}"))))
             .unwrap_or_default();
     }
     let proof = (exact.proven_optimal, exact.upper_bound);
+    let report = level_up.and_then(|level_up| level_up_report(&exact, &prepared.items, level_up, &currency));
     let plan = crate::exact::to_production_plan(&exact, &prepared.items, &currency, &prepared.facility_counts);
-    serde_json::to_string(&prepared.to_js(plan, Some(proof))).unwrap_or_default()
+    let mut js = prepared.to_js(plan, Some(proof));
+    js.level_up = report;
+    serde_json::to_string(&js).unwrap_or_default()
+}
+
+/// How long `exact`, a level-up plan, takes to cover each of the level-up's costs.
+fn level_up_report(
+    exact: &crate::exact::ExactPlan,
+    items: &[ProductionItem],
+    level_up: &crate::exact::LevelUp,
+    currency: &str,
+) -> Option<JsLevelUpReport> {
+    let pace = exact.pace.filter(|p| *p > 0.0)?;
+    let net = crate::exact::net_rates(exact, items);
+    let requirements = level_up
+        .cost
+        .iter()
+        .map(|(name, need)| {
+            let have = level_up.stock.iter().filter(|(n, _)| n == name).fold(0.0, |sum, (_, a)| sum + a);
+            let per_second =
+                if name == currency { exact.rate_per_second } else { net.get(name).copied().unwrap_or(0.0).max(0.0) };
+            let short = (need - have).max(0.0);
+            let seconds = if short <= 0.0 {
+                Some(0.0)
+            } else {
+                (per_second > 0.0).then(|| short / per_second)
+            };
+            JsLevelUpRequirement { name: name.clone(), need: *need, have, per_second, seconds }
+        })
+        .collect();
+    Some(JsLevelUpReport { seconds: crate::exact::PACE_UNIT / pace, requirements })
 }
 
 fn no_plan() -> String {
@@ -1323,6 +1436,7 @@ impl PreparedInput {
             proven_optimal: proof.map(|(proven, _)| proven),
             upper_bound: proof.map(|(_, bound)| bound),
             unverified,
+            level_up: None,
         }
     }
 }
