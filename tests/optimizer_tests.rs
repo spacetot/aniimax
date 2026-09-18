@@ -314,11 +314,11 @@ fn test_grower_reason_names_the_intermediate_it_feeds() {
     let plan = find_production_plan(&items, "coins", &counts, &modules, false).expect("plan should be feasible");
 
     assert!(produces(&plan, "premium_bread"), "got: {:?}", plan.coin_items);
-    // Farmland can grow more wheat than one Well's water supports, so some quick_wheat may also
-    // sell directly; the rows feeding the chain are what's checked here.
+    // Farmland grows more wheat than one Well's water supports, so the Carousel Mill's leftover
+    // wheatmeal sells directly; each row still names what it feeds first.
     let has_row = |facility: &str, item: &str, reason: &str| {
         plan.coin_items.iter().any(|s| {
-            s.facility == facility && s.item_name.as_deref() == Some(item) && s.reason == reason
+            s.facility == facility && s.item_name.as_deref() == Some(item) && s.reason.starts_with(reason)
         })
     };
     assert!(has_row("Farmland", "quick_wheat", "Used for wheatmeal"), "got: {:?}", plan.coin_items);
@@ -919,8 +919,8 @@ fn test_environment_coverage_uses_multiple_owned_buildings_when_one_is_not_enoug
 // can't switch recipes, so this takes two dedicated units: one making milled_rice, one making
 // rice_drink, each shown as its own row.
 // 3 rice plots -> 3 x 18/2400 rice/sec -> 0.000625 rice_drink/sec x (1860 - 2 x 12) = 1.1475.
-// That needs 0.01 fresh_water/sec; a Well with a level-1 Aniimo makes 8/2250, so 3 of the 4 Wells
-// feed rice_drink and the last one sells its water: 8/2250 x 46 = 0.16356.
+// That needs 0.01 fresh_water/sec; 4 Wells with level-1 Aniimo make 4 x 8/2250 = 0.014222, and
+// the rest sells: 0.004222 x 46 = 0.19422.
 #[test]
 fn test_processor_facility_dedicates_a_separate_unit_to_its_own_intermediate_step() {
     let data_dir = Path::new("data");
@@ -948,7 +948,7 @@ fn test_processor_facility_dedicates_a_separate_unit_to_its_own_intermediate_ste
     assert_eq!(intermediate_step.facility_count, 1);
 
     assert_eq!(count_of(&plan, "Well", "fresh_water"), 4);
-    let well_sale = 8.0 / 2250.0 * 46.0;
+    let well_sale = (4.0 * 8.0 / 2250.0 - 0.01) * 46.0;
     assert_rate(&plan, 3.0 * 18.0 / 2400.0 / 18.0 / 2.0 * (1860.0 - 24.0) + well_sale);
 }
 

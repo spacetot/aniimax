@@ -229,6 +229,7 @@ The web app (`find_plan`, backed by `find_production_plan`) solves a harder vers
 
 - **Growers** (Farmland, Woodland, Mine, ...): each plot commits to one crop for a full cycle, so fractional shares are converted to whole counts via the largest-remainder method (the same apportionment technique used to allocate parliament seats).
 - **Processors** (Carousel Mill, Claw Game Cooker, ...): a machine can't time-share between two recipes either; a player sets it to run one recipe continuously. When more recipes want a processor than it has units, the most profitable candidates each get one dedicated unit and the rest are excluded, then the LP re-solves so their freed-up supply finds a real next-best use instead of sitting idle.
+- **Filling the whole units**: once the counts are settled, the LP solves one last time with each item capped at its whole units. A plot or Well rounded up produces its full output, not the fraction the continuous solve needed, and every chain using the same item shares the same units, so the extra goes to whichever recipe can use it (a spare processor unit can take a new recipe) or sells directly. Units the rounding left idle grow the facility's most valuable crop to sell.
 
 **4. Time to reach a goal.** Once the plan is settled, each item contributes nothing until its own lead time has passed, then its steady rate. The time to reach a target amount is found with a binary search rather than solved for directly, since accumulated amount is monotonic in time:
 
