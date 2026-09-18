@@ -7,10 +7,9 @@
 // handling are generated dynamically, no other file needs to change. `category` groups the cards
 // in the UI (see `FACILITY_CATEGORIES` below for display order). `hasLevels: false` hides the
 // Level input entirely for facilities that don't level up in-game; omit the field (defaults to
-// leveled) for any facility that does. `hasWorker: true` adds the Aniimo level and personality
-// bonus inputs for facilities an Aniimo works; they set how fast its workload is completed.
-// `ability` is the Aniimo ability the facility uses, shown on the level input; `personality` is
-// the personality that gets its +20% bonus, shown on the bonus checkbox (omitted if not known).
+// leveled) for any facility that does. `hasWorker: true` marks facilities an Aniimo works;
+// `ability` is the Aniimo ability the facility uses and `personality` the personality that gets
+// its +20% speed bonus (omitted if not known), shown in the plan's Aniimo recommendations.
 // `unlocks` maps each facility level to the RV (Homeland) level that unlocks it. `counts` maps an
 // RV level to how many of the facility you can own from that level on; simple mode uses both (see
 // `simpleSetup`). Counts are only confirmed in game up to RV level 4 (Farmland at RV 1 is

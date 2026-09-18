@@ -2255,15 +2255,23 @@ fn solve_facility_allocation<'a>(
         if terms.is_empty() {
             continue; // nothing can contribute to this resource, nothing to constrain
         }
-        problem.add_constraint(&terms, ComparisonOp::Ge, floor);
+        // The floor is normally the exact maximum a separate solve reached, so a hair of slack
+        // keeps floating-point noise from turning "exactly the maximum" into "infeasible".
+        problem.add_constraint(&terms, ComparisonOp::Ge, floor * (1.0 - 1e-6));
     }
 
     // Every variable is bounded by at least its own facility's constraint (facility_demand always
     // includes the item's own facility; see `accumulate_demand`), and every constraint's RHS is
-    // a non-negative facility count, so this should always be feasible and bounded. Degrade to
-    // "nothing selected" rather than panic if that assumption is ever wrong.
+    // a non-negative facility count, so this is always feasible and bounded without floors. A
+    // byproduct floor this candidate set can't reach (e.g. after an exclusion pass removed the
+    // item that carried it) falls back to the unfloored solve: prioritizing byproducts must never
+    // turn a feasible plan into no plan at all. Degrade to "nothing selected" rather than panic if
+    // even that fails.
     let Ok(solution) = problem.solve() else {
-        return HashMap::new();
+        if byproduct_floors.is_empty() {
+            return HashMap::new();
+        }
+        return solve_facility_allocation(item_map, effs, facility_counts, coverage_bounds, &[]);
     };
 
     item_vars

@@ -366,16 +366,6 @@ p {
     cursor: pointer;
 }
 
-/* Aniimo level and personality bonus, below a worked facility's tiers. */
-.worker-row {
-    margin-top: 0.75rem;
-}
-
-.worker-row .checkbox-field label {
-    font-size: 0.7rem;
-    padding-bottom: 0.5rem;
-}
-
 /* One owned tier's remove button, sitting inline at the end of its Count/Level row. */
 .tier-remove-btn {
     cursor: pointer;

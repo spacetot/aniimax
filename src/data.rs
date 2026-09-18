@@ -10,9 +10,34 @@ use std::fs::File;
 use std::path::Path;
 
 use crate::models::{
-    FarmlandRow, MineralRow, ProcessingRowNoEnergy, ProcessingRowWithEnergy, ProductionItem,
-    WoodlandRow,
+    AniimoRequirements, FarmlandRow, MineralRow, ProcessingRowNoEnergy, ProcessingRowWithEnergy,
+    ProductionItem, WoodlandRow,
 };
+
+/// One row of `aniimo_requirements.csv`.
+#[derive(Debug, serde::Deserialize)]
+struct AniimoRequirementRow {
+    name: String,
+    ability: String,
+    min_level: u32,
+}
+
+/// Parses the contents of `aniimo_requirements.csv` (columns `name, facility, ability,
+/// min_level`). Takes the CSV text rather than a path so the web build can pass its embedded copy.
+pub fn parse_aniimo_requirements(csv_text: &str) -> Result<AniimoRequirements, Box<dyn Error>> {
+    let mut reqs = AniimoRequirements::default();
+    let mut rdr = ReaderBuilder::new().trim(csv::Trim::All).from_reader(csv_text.as_bytes());
+    for row in rdr.deserialize::<AniimoRequirementRow>() {
+        let row = row?;
+        reqs.insert(&row.name, &row.ability, row.min_level);
+    }
+    Ok(reqs)
+}
+
+/// Loads `aniimo_requirements.csv` from the data directory; see [`parse_aniimo_requirements`].
+pub fn load_aniimo_requirements(data_dir: &Path) -> Result<AniimoRequirements, Box<dyn Error>> {
+    parse_aniimo_requirements(&std::fs::read_to_string(data_dir.join("aniimo_requirements.csv"))?)
+}
 
 /// Parses a module requirement string (e.g., "ecological_module:1") into a tuple.
 ///

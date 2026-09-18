@@ -681,9 +681,13 @@ pub struct JsPlanInput {
     #[serde(default)]
     pub modules: JsModuleLevels,
     /// Aniimo working each facility, keyed by facility name; facilities left out get a level-1
-    /// Aniimo without the personality bonus.
+    /// Aniimo without the personality bonus. Ignored when `aniimo` is set.
     #[serde(default)]
     pub workers: std::collections::HashMap<String, JsWorker>,
+    /// `"minimum"` or `"best"`: plan for that [`crate::models::AniimoSetup`] instead of
+    /// `workers`, and report which Aniimo each row needs (see [`JsPlanStep::aniimo`]).
+    #[serde(default)]
+    pub aniimo: Option<String>,
     /// See `crate::optimizer::find_production_plan`'s doc comment on `prioritize_byproducts`;
     /// defaults to `true` (checked by default in the UI) since Wood Blocks/Mineral Sand can be a
     /// real in-game constraint players can't just buy their way around.
@@ -721,6 +725,33 @@ pub struct JsPlanStep {
     /// The growing environment this row's item needs ("Cool"/"Warm"/"Freeze"/"Scorching"/
     /// "Adequate"), if any; see `crate::models::PlanStep::environment`.
     pub environment: Option<String>,
+    /// The Aniimo this row's recipe needs under the plan's Aniimo setup; only set on producing
+    /// rows of Aniimo-worked facilities, and only when the plan was made for a setup.
+    #[serde(default)]
+    pub aniimo: Option<JsAniimo>,
+}
+
+/// The Aniimo a plan row needs: its ability, ability level, and whether the plan assumes the
+/// facility's personality bonus.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JsAniimo {
+    pub ability: String,
+    pub level: u32,
+    pub personality_bonus: bool,
+}
+
+/// The Aniimo requirements embedded in the web build; see `data/aniimo_requirements.csv`.
+fn embedded_aniimo_requirements() -> crate::models::AniimoRequirements {
+    crate::data::parse_aniimo_requirements(include_str!("../data/aniimo_requirements.csv"))
+        .expect("embedded aniimo_requirements.csv is valid")
+}
+
+fn aniimo_setup_from(name: &str) -> Option<crate::models::AniimoSetup> {
+    match name {
+        "minimum" => Some(crate::models::AniimoSetup::Minimum),
+        "best" => Some(crate::models::AniimoSetup::Best),
+        _ => None,
+    }
 }
 
 fn status_str(status: crate::models::PlanStepStatus) -> &'static str {
@@ -752,6 +783,7 @@ impl From<crate::models::PlanStep> for JsPlanStep {
             is_grower: s.is_grower,
             cycle_time: s.cycle_time,
             environment: s.environment,
+            aniimo: None,
         }
     }
 }
@@ -986,7 +1018,12 @@ pub fn find_plan(input_json: &str, on_progress: Option<js_sys::Function>) -> Str
     };
 
     let mut items = get_embedded_items();
-    workers_from(&input.workers).apply(&mut items);
+    let setup = input.aniimo.as_deref().and_then(aniimo_setup_from);
+    let requirements = embedded_aniimo_requirements();
+    match setup {
+        Some(setup) => requirements.apply(setup, &mut items),
+        None => workers_from(&input.workers).apply(&mut items),
+    }
 
     // `js_sys::Function::call1` takes `&JsValue` for both the `this` receiver and the argument;
     // errors (e.g. the JS callback itself throwing) are deliberately swallowed with `let _ =`,
@@ -1007,12 +1044,32 @@ pub fn find_plan(input_json: &str, on_progress: Option<js_sys::Function>) -> Str
         report_ref,
     ) {
         Some(plan) => {
+            let coin_items = plan
+                .coin_items
+                .into_iter()
+                .map(|step| {
+                    let aniimo = match (setup, &step.item_name) {
+                        (Some(setup), Some(item)) if step.status == crate::models::PlanStepStatus::Producing => {
+                            requirements.get(item).map(|(ability, _)| {
+                                let worker = requirements.worker_for(item, setup);
+                                JsAniimo {
+                                    ability: ability.to_string(),
+                                    level: worker.suitability,
+                                    personality_bonus: worker.personality_bonus,
+                                }
+                            })
+                        }
+                        _ => None,
+                    };
+                    JsPlanStep { aniimo, ..step.into() }
+                })
+                .collect();
             let result = JsProductionPlan {
                 success: true,
                 error: None,
                 currency: plan.currency,
                 rate_per_second: plan.rate_per_second,
-                coin_items: plan.coin_items.into_iter().map(Into::into).collect(),
+                coin_items,
                 income_streams: plan.income_streams.into_iter().map(Into::into).collect(),
                 byproduct_rates: plan.byproduct_rates,
                 environment_assignments: plan.environment_assignments.into_iter().map(Into::into).collect(),
@@ -1204,6 +1261,9 @@ struct RecipeInfo {
     required_amount: Option<Vec<u32>>,
     module_requirement: Option<(String, u32)>,
     byproduct: Option<(String, u32)>,
+    /// The Aniimo ability this recipe uses and the lowest ability level that can run it; `None`
+    /// for crops and trees.
+    aniimo: Option<(String, u32)>,
 }
 
 /// Get the full recipe list for every item in the game data, grouped by nothing in particular
@@ -1211,6 +1271,7 @@ struct RecipeInfo {
 #[wasm_bindgen]
 pub fn get_all_items() -> String {
     let items = get_embedded_items();
+    let requirements = embedded_aniimo_requirements();
     let recipes: Vec<RecipeInfo> = items
         .iter()
         .map(|item| RecipeInfo {
@@ -1227,6 +1288,7 @@ pub fn get_all_items() -> String {
             required_amount: item.required_amount.clone(),
             module_requirement: item.module_requirement.clone(),
             byproduct: item.byproduct.clone(),
+            aniimo: requirements.get(&item.name).map(|(ability, level)| (ability.to_string(), level)),
         })
         .collect();
 
@@ -1235,7 +1297,16 @@ pub fn get_all_items() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::get_embedded_items;
+    use super::{embedded_aniimo_requirements, get_embedded_items};
+
+    // Every Aniimo-worked recipe the web build knows has an embedded requirement row.
+    #[test]
+    fn embedded_aniimo_requirements_cover_embedded_items() {
+        let reqs = embedded_aniimo_requirements();
+        for item in get_embedded_items().iter().filter(|i| i.workload.is_some()) {
+            assert!(reqs.get(&item.name).is_some(), "{} has no embedded Aniimo requirement", item.name);
+        }
+    }
 
     // The web build embeds its own copy of every CSV. A facility added to `load_all_data` but not
     // here (or the reverse) would silently disappear from the web app.

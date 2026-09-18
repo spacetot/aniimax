@@ -225,3 +225,35 @@ fn test_quick_variants_match_their_base_item() {
         assert!(quick.module_requirement.is_some(), "{} should need a module", quick.name);
     }
 }
+
+// Every Aniimo-worked recipe (anything with a workload) needs an ability and minimum level in
+// aniimo_requirements.csv, so the Minimum and Best Aniimo setups can price it. The file's facility
+// column must match where the recipe is made, and nothing may be listed that isn't in the data.
+#[test]
+fn test_aniimo_requirements_cover_every_worked_recipe() {
+    let Some(items) = load_items() else { return };
+    let reqs = aniimax::data::load_aniimo_requirements(Path::new("data")).expect("Failed to load requirements");
+    const ABILITIES: &[&str] = &[
+        "Fire", "Grass", "Water", "Earth", "Lightning", "Ice", "Wind", "Dark", "Light", "Hauling",
+        "Artisanship", "Leisure", "Perfumery",
+    ];
+
+    for item in items.iter().filter(|i| i.workload.is_some()) {
+        let (ability, level) = reqs
+            .get(&item.name)
+            .unwrap_or_else(|| panic!("{} has no row in aniimo_requirements.csv", item.name));
+        assert!(ABILITIES.contains(&ability), "{} needs unknown ability {ability:?}", item.name);
+        assert!((1..=3).contains(&level), "{} needs ability level {level}", item.name);
+    }
+
+    let text = std::fs::read_to_string("data/aniimo_requirements.csv").unwrap();
+    for line in text.lines().skip(1).filter(|l| !l.trim().is_empty()) {
+        let cols: Vec<&str> = line.split(',').map(str::trim).collect();
+        let item = items
+            .iter()
+            .find(|i| i.name == cols[0])
+            .unwrap_or_else(|| panic!("aniimo_requirements.csv lists {}, which isn't in the data", cols[0]));
+        assert_eq!(cols[1], item.facility, "{} is made at {}, not {}", cols[0], item.facility, cols[1]);
+        assert!(item.workload.is_some(), "{} has a fixed grow time; it doesn't need an Aniimo row", cols[0]);
+    }
+}

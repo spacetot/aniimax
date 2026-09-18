@@ -180,6 +180,66 @@ impl Workers {
     }
 }
 
+/// Which Aniimo a plan assumes on every workload-based facility, when the player hasn't said
+/// which Aniimo they have. The calculator plans both and lets the player pick.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AniimoSetup {
+    /// Each recipe worked by an Aniimo at exactly the ability level it requires, without the
+    /// personality bonus: the least a player needs to run the plan at all.
+    Minimum,
+    /// A level-3 Aniimo with the facility's personality bonus everywhere (480% efficiency): the
+    /// fastest any facility can run.
+    Best,
+}
+
+/// The Aniimo ability and minimum ability level each workload-based recipe needs (see
+/// `data/aniimo_requirements.csv`). Crops and trees aren't listed; their grow time is fixed.
+///
+/// ```
+/// use aniimax::models::{AniimoRequirements, AniimoSetup};
+///
+/// let mut reqs = AniimoRequirements::default();
+/// reqs.insert("lavender_powder", "Wind", 2);
+/// assert_eq!(reqs.get("lavender_powder"), Some(("Wind", 2)));
+/// assert_eq!(reqs.worker_for("lavender_powder", AniimoSetup::Minimum).suitability, 2);
+/// assert_eq!(reqs.worker_for("lavender_powder", AniimoSetup::Best).suitability, 3);
+/// ```
+#[derive(Debug, Clone, Default)]
+pub struct AniimoRequirements {
+    by_item: std::collections::HashMap<String, (String, u32)>,
+}
+
+impl AniimoRequirements {
+    pub fn insert(&mut self, item: &str, ability: &str, min_level: u32) -> &mut Self {
+        self.by_item.insert(item.to_string(), (ability.to_string(), min_level));
+        self
+    }
+
+    /// The ability and minimum ability level `item` needs, if it's worked by an Aniimo.
+    pub fn get(&self, item: &str) -> Option<(&str, u32)> {
+        self.by_item.get(item).map(|(ability, level)| (ability.as_str(), *level))
+    }
+
+    /// The Aniimo `setup` puts on `item`. An item without a listed requirement gets a level-1
+    /// Aniimo under [`AniimoSetup::Minimum`].
+    pub fn worker_for(&self, item: &str, setup: AniimoSetup) -> Worker {
+        match setup {
+            AniimoSetup::Best => Worker::new(3, true),
+            AniimoSetup::Minimum => Worker::new(self.get(item).map_or(1, |(_, level)| level), false),
+        }
+    }
+
+    /// Recomputes every workload-based item's `production_time` for the Aniimo `setup` puts on
+    /// it. Crops and trees keep their fixed grow time.
+    pub fn apply(&self, setup: AniimoSetup, items: &mut [ProductionItem]) {
+        for item in items.iter_mut() {
+            if let Some(workload) = item.workload {
+                item.production_time = self.worker_for(&item.name, setup).seconds_for(workload);
+            }
+        }
+    }
+}
+
 /// Efficiency metrics for an item when consumed for energy.
 #[derive(Debug, Clone)]
 pub struct EnergyItemEfficiency {

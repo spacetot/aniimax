@@ -1242,3 +1242,31 @@ fn test_more_farmland_never_lowers_the_rate_with_contested_coverage() {
         previous = plan.rate_per_second;
     }
 }
+
+// Regression: with a level-3 Aniimo and the personality bonus everywhere (the "Best" setup),
+// prioritizing byproducts made this plan disappear entirely. The Mineral Sand floor equals the
+// exact maximum a separate solve found, and floating-point noise (or an exclusion pass removing
+// the chain that carried it) left the floored LP infeasible. Prioritizing must never turn a
+// feasible plan into no plan: it now keeps a hair of slack and falls back to the unfloored solve.
+#[test]
+fn test_prioritize_byproducts_with_best_aniimo_still_finds_a_plan() {
+    let data_dir = Path::new("data");
+    if !data_dir.exists() {
+        return;
+    }
+    let mut items = load_all_data(data_dir).expect("Failed to load data");
+    let reqs = aniimax::data::load_aniimo_requirements(data_dir).expect("Failed to load requirements");
+    reqs.apply(aniimax::models::AniimoSetup::Best, &mut items);
+    let counts = FacilityCounts::only(&[
+        ("Farmland", 10, 5),
+        ("Mine", 2, 3),
+        ("Crafting Table", 1, 4),
+        ("Joy Wheel Loom", 1, 1),
+    ]);
+    let modules = ModuleLevels { ecological_module: 8, kitchen_module: 7, resource_detector: 8, crafting_module: 7 };
+
+    let normal = find_production_plan(&items, "coins", &counts, &modules, false).expect("plan should be feasible");
+    let prioritized = find_production_plan(&items, "coins", &counts, &modules, true)
+        .expect("prioritizing byproducts should never remove a feasible plan");
+    assert!(prioritized.rate_per_second <= normal.rate_per_second + 1e-9);
+}

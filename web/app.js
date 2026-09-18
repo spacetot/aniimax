@@ -40,6 +40,15 @@ function initWorker() {
     };
 }
 
+// Throws away the worker and anything still running in it, e.g. a Minimum-setup solve from an
+// older Calculate click that would otherwise hold up the new one, and starts a fresh worker.
+function restartWorker() {
+    worker.terminate();
+    pendingWorkerRequests.forEach(pending => pending.reject(new Error('Cancelled by a newer calculation')));
+    pendingWorkerRequests.clear();
+    initWorker();
+}
+
 // Sends one request to the worker and resolves with its result (or rejects with its error);
 // `type` matches a key in worker.js's `HANDLERS` (or `'find_plan'`, handled specially there),
 // `payload` is that function's own single string argument (omit for `get_version`/
@@ -95,6 +104,31 @@ function trialCountToPercent(count) {
 // change, since those invalidate the plan.
 let lastPlan = null;
 
+// Plans for both Aniimo setups from the latest Calculate: `{ best, minimum }`. Best is solved and
+// shown first; Minimum follows in the background (see `runFindPlan`). `planRunId` lets a newer
+// Calculate click discard an older run's late Minimum result.
+let plansBySetup = {};
+let planRunId = 0;
+
+function selectedAniimoSetup() {
+    return document.getElementById('aniimo-minimum').checked ? 'minimum' : 'best';
+}
+
+// Shows the plan for the selected Aniimo setup, or a "still working" note if Minimum isn't ready.
+function showSelectedPlan(scroll) {
+    const setup = selectedAniimoSetup();
+    const plan = plansBySetup[setup];
+    const pending = document.getElementById('aniimo-pending');
+    if (!plan) {
+        pending.style.display = 'block';
+        return;
+    }
+    pending.style.display = 'none';
+    lastPlan = plan;
+    displayPlan(plan, scroll);
+    if (plan.success) runTimeToGoal();
+}
+
 // The most recently computed goal result, held the same way as `lastPlan` so switching the rate
 // unit can re-render the Product Breakdown table's Profit column without recomputing the goal.
 let lastGoalResult = null;
@@ -121,15 +155,6 @@ const RATE_UNIT_SECONDS = {
 // level 3 and 4 more upgraded to level 5), so a facility can own more than one tier; facilities
 // that don't level up at all (`hasLevels: false`) only ever have exactly one.
 let facilityTiers = {};
-
-// Aniimo working each `hasWorker` facility: `{ 'Carousel Mill': {suitability: 3, personality_bonus: false}, ... }`.
-// Its work suitability level (1-3) and personality bonus set how fast the facility completes
-// workload; see `Worker` in models.rs. Sent to the solver as-is.
-let facilityWorkers = {};
-
-function defaultWorker() {
-    return { suitability: 1, personality_bonus: false };
-}
 
 function defaultFacilityTiers() {
     const tiers = {};
@@ -178,7 +203,6 @@ function renderFacilityCards() {
                 <h4>${f.name} <span class="info-icon" data-tooltip="${f.tooltip}">?</span></h4>
                 <div class="facility-tiers" data-facility="${f.name}"></div>
                 ${f.hasLevels === false ? '' : '<button type="button" class="add-tier-btn" data-facility="' + f.name + '">+ Add level</button>'}
-                ${f.hasWorker ? workerRowHtml(f) : ''}
             </div>
         `).join('');
         return `
@@ -191,26 +215,6 @@ function renderFacilityCards() {
     FACILITIES.forEach(f => renderTierRows(f.name));
 }
 
-// The Aniimo inputs under a `hasWorker` facility's tiers: its work suitability level and whether it
-// has the facility's personality bonus.
-function workerRowHtml(f) {
-    const w = facilityWorkers[f.name];
-    return `
-        <div class="facility-inputs worker-row" data-facility="${f.name}">
-            <div class="input-field">
-                <label>${f.ability} level <span class="info-icon" data-tooltip="${f.ability} ability level (1-3) of the Aniimo working this facility. Higher levels work much faster: a 108-workload recipe takes 108s at level 1, 36s at level 2 and 27s at level 3. The personality bonus makes it 20% faster.">?</span></label>
-                <input type="number" class="worker-suitability" value="${w.suitability}" min="1" max="3">
-            </div>
-            <div class="input-field checkbox-field">
-                <label title="The Aniimo working this facility has the ${f.personality || 'matching'} personality: +20% speed">
-                    <input type="checkbox" class="worker-bonus" ${w.personality_bonus ? 'checked' : ''}>
-                    ${f.personality || 'Personality'} bonus
-                </label>
-            </div>
-        </div>
-    `;
-}
-
 // Delegated handlers for the facility grid, covering tier rows added/removed after initial
 // render: editing a Count/Level input updates `facilityTiers` and persists it; "+ Add level"
 // appends a new tier (guessing the next level up from the highest owned, capped at 10); "×"
@@ -219,17 +223,6 @@ function attachFacilityTierHandlers() {
     const grid = document.getElementById('facilities-grid');
 
     grid.addEventListener('input', (e) => {
-        const workerRow = e.target.closest('.worker-row');
-        if (workerRow) {
-            const worker = facilityWorkers[workerRow.dataset.facility];
-            if (e.target.classList.contains('worker-suitability')) {
-                worker.suitability = Math.min(3, Math.max(1, numberOrDefault(e.target.value, 1)));
-            } else if (e.target.classList.contains('worker-bonus')) {
-                worker.personality_bonus = e.target.checked;
-            }
-            saveInputsToStorage();
-            return;
-        }
         const row = e.target.closest('.tier-row');
         if (!row) return;
         const container = e.target.closest('.facility-tiers');
@@ -242,13 +235,6 @@ function attachFacilityTierHandlers() {
             tier.level = numberOrDefault(e.target.value, 1);
         }
         saveInputsToStorage();
-    });
-
-    // Show the clamped value once the player leaves the field (typing 5 saves as 3).
-    grid.addEventListener('change', (e) => {
-        if (e.target.classList.contains('worker-suitability')) {
-            e.target.value = facilityWorkers[e.target.closest('.worker-row').dataset.facility].suitability;
-        }
     });
 
     grid.addEventListener('click', (e) => {
@@ -352,21 +338,10 @@ function initFacilityTiers(data) {
             : defaults[f.name];
     });
 
-    const savedWorkers = (data && data.facilityWorkers) || {};
-    facilityWorkers = {};
-    FACILITIES.filter(f => f.hasWorker).forEach(f => {
-        const w = savedWorkers[f.name];
-        facilityWorkers[f.name] = w
-            ? {
-                suitability: Math.min(3, Math.max(1, numberOrDefault(w.suitability, 1))),
-                personality_bonus: !!w.personality_bonus
-            }
-            : defaultWorker();
-    });
 }
 
 function saveInputsToStorage() {
-    const data = { facilityTiers, facilityWorkers };
+    const data = { facilityTiers };
     getPersistedFieldIds().forEach(id => {
         const el = document.getElementById(id);
         if (!el) return;
@@ -514,8 +489,7 @@ function getPlanInputValues() {
             currency: 'coins',
             prioritize_byproducts: document.getElementById('prioritize-byproducts').checked,
             facilities,
-            modules,
-            workers: facilityWorkers
+            modules
         };
     }
 
@@ -538,8 +512,7 @@ function getPlanInputValues() {
         currency: 'coins',
         prioritize_byproducts: document.getElementById('prioritize-byproducts').checked,
         facilities,
-        modules,
-        workers: facilityWorkers
+        modules
     };
 }
 
@@ -673,6 +646,16 @@ function renderSeedsNeeded(goalResult) {
 // optimizer.rs (Heat Furnace's two modes, then Cooling Unit's two, then Sunlamp's one).
 const ENVIRONMENT_MODE_ORDER = ['Warm', 'Scorching', 'Cool', 'Freeze', 'Adequate'];
 
+// "Fire Lv.3 · Practical" for a row that needs a specific Aniimo, or '-' when it doesn't (crops,
+// trees, idle facilities).
+function aniimoLabel(step) {
+    const a = step.aniimo;
+    if (!a) return '-';
+    if (!a.personality_bonus) return `${a.ability} Lv.${a.level}`;
+    const personality = FACILITIES.find(f => f.name === step.facility)?.personality;
+    return `${a.ability} Lv.${a.level} · ${personality || 'matching personality'}`;
+}
+
 function facilityPlanTable(rows) {
     return `
         <div class="table-wrapper">
@@ -682,6 +665,7 @@ function facilityPlanTable(rows) {
                         <th>Facility</th>
                         <th>Count</th>
                         <th>Producing</th>
+                        <th>Aniimo</th>
                         <th>Why</th>
                     </tr>
                 </thead>
@@ -690,9 +674,45 @@ function facilityPlanTable(rows) {
                         <td>${step.facility}</td>
                         <td>${step.facility_count}</td>
                         <td>${step.item_name || '-'}</td>
+                        <td>${aniimoLabel(step)}</td>
                         <td>${step.reason}</td>
                     </tr>
                 `).join('')}</tbody>
+            </table>
+        </div>
+    `;
+}
+
+// The Aniimo to station for the shown plan, one row per distinct ability / level / personality,
+// with how many are needed and where they go.
+function renderAniimoSummary(plan) {
+    const container = document.getElementById('aniimo-summary');
+    const groups = new Map();
+    (plan.coin_items || []).forEach(step => {
+        if (!step.aniimo) return;
+        const key = aniimoLabel(step);
+        if (!groups.has(key)) groups.set(key, { count: 0, where: new Map() });
+        const g = groups.get(key);
+        g.count += step.facility_count;
+        const place = `${step.facility} (${step.item_name})`;
+        g.where.set(place, (g.where.get(place) || 0) + step.facility_count);
+    });
+    if (groups.size === 0) {
+        container.innerHTML = '<p class="hint">No facility in this plan needs a particular Aniimo.</p>';
+        return;
+    }
+    const rows = [...groups.entries()]
+        .sort((a, b) => a[0].localeCompare(b[0]))
+        .map(([label, g]) => {
+            const where = [...g.where.entries()].map(([place, n]) => `${n > 1 ? n + '× ' : ''}${place}`).join(', ');
+            return `<tr><td>${label}</td><td>${g.count}</td><td>${where}</td></tr>`;
+        })
+        .join('');
+    container.innerHTML = `
+        <div class="table-wrapper">
+            <table class="facility-plan-table">
+                <thead><tr><th>Aniimo</th><th>How many</th><th>Where</th></tr></thead>
+                <tbody>${rows}</tbody>
             </table>
         </div>
     `;
@@ -921,7 +941,7 @@ function updateRateUnitDisplays() {
 // Render a successfully computed plan: rate summary + facility plan table. Goal-independent,
 // called once per Calculate click (or facility/currency/module change), not on every goal
 // keystroke.
-function displayPlan(plan) {
+function displayPlan(plan, scroll = true) {
     const resultsSection = document.getElementById('results-section');
     const errorEl = document.getElementById('error-message');
     const resultsContent = document.getElementById('results-content');
@@ -946,8 +966,9 @@ function displayPlan(plan) {
         `Explored ${plan.candidates_evaluated} candidate item${plan.candidates_evaluated === 1 ? '' : 's'} across ${plan.trial_solves} trial solve${plan.trial_solves === 1 ? '' : 's'} to find this plan.`;
 
     renderFacilityPlan(plan);
+    renderAniimoSummary(plan);
 
-    resultsSection.scrollIntoView({ behavior: 'smooth' });
+    if (scroll) resultsSection.scrollIntoView({ behavior: 'smooth' });
 }
 
 // Render a time-to-goal result: Total Time / Amount Produced summary + Product Breakdown. Called
@@ -994,26 +1015,36 @@ async function runFindPlan() {
     progressFill.style.width = '0%';
     progressCaption.textContent = 'Starting...';
 
+    const runId = ++planRunId;
+    plansBySetup = {};
+    if (pendingWorkerRequests.size > 0) restartWorker();
     try {
         const input = getPlanInputValues();
-        const inputJson = JSON.stringify(input);
 
         // Runs in the worker (see worker.js); the main thread stays free to paint the progress
         // bar above for however long this takes, instead of freezing. `onTrialProgress` receives
         // the solver's own real, running trial-solve count after every trial solve; converted to
         // a fill percentage by `trialCountToPercent` below.
-        const resultJson = await callWorker('find_plan', inputJson, (count) => {
+        const bestJson = await callWorker('find_plan', JSON.stringify({ ...input, aniimo: 'best' }), (count) => {
             progressFill.style.width = `${trialCountToPercent(count)}%`;
             progressCaption.textContent = `Trial ${count}...`;
         });
         progressFill.style.width = '100%';
-        const plan = JSON.parse(resultJson);
+        if (runId !== planRunId) return;
+        plansBySetup.best = JSON.parse(bestJson);
+        showSelectedPlan(true);
 
-        lastPlan = plan;
-        displayPlan(plan);
-        if (plan.success) {
-            await runTimeToGoal();
-        }
+        // The Minimum setup solves after Best is already on screen; switching to it before it's
+        // done shows a short "still working" note until it arrives.
+        callWorker('find_plan', JSON.stringify({ ...input, aniimo: 'minimum' }))
+            .then(json => {
+                if (runId !== planRunId) return;
+                plansBySetup.minimum = JSON.parse(json);
+                if (selectedAniimoSetup() === 'minimum') showSelectedPlan(false);
+            })
+            .catch(error => {
+                if (runId === planRunId) console.error('Minimum Aniimo plan failed:', error);
+            });
     } catch (error) {
         console.error('Plan calculation error:', error);
         lastPlan = null;
@@ -1093,6 +1124,15 @@ function formatRecipeYield(recipe) {
     return text;
 }
 
+// "Fire Lv.2+ · best Lv.3 Practical": the minimum ability level a recipe accepts, then the best
+// Aniimo for it. '-' for crops and trees.
+function formatRecipeAniimo(recipe, facility) {
+    if (!recipe.aniimo) return '-';
+    const [ability, minLevel] = recipe.aniimo;
+    const best = `best Lv.3${facility.personality ? ' ' + facility.personality : ''}`;
+    return `${ability} Lv.${minLevel}+ · ${best}`;
+}
+
 function formatRecipeModule(recipe) {
     if (!recipe.module_requirement) return '-';
     const [name, level] = recipe.module_requirement;
@@ -1129,6 +1169,7 @@ function renderRecipeTables(recipes) {
                     <td>${r.workload ? `${r.workload} workload` : formatRecipeTime(r.production_time)}</td>
                     <td>${r.sell_value} Coins</td>
                     <td>${formatRecipeModule(r)}</td>
+                    <td>${formatRecipeAniimo(r, f)}</td>
                 </tr>
             `).join('');
 
@@ -1146,6 +1187,7 @@ function renderRecipeTables(recipes) {
                                     <th>Time <span class="info-icon" data-tooltip="Grow time for crops and trees. Everything else lists workload: how long it takes depends on the Aniimo working it (108 workload takes 108s at level 1, 36s at level 2, 27s at level 3).">?</span></th>
                                     <th>Sell</th>
                                     <th>Module</th>
+                                    <th>Aniimo <span class="info-icon" data-tooltip="The lowest ability level that can make this, and the best Aniimo for it: level 3 with the facility's personality (+20% speed).">?</span></th>
                                 </tr>
                             </thead>
                             <tbody>${rows}</tbody>
@@ -1209,6 +1251,8 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('optimize-btn').addEventListener('click', runFindPlan);
     document.getElementById('clear-saved-btn').addEventListener('click', clearSavedInputs);
     document.getElementById('rate-unit').addEventListener('change', updateRateUnitDisplays);
+    document.getElementById('aniimo-best').addEventListener('change', () => showSelectedPlan(false));
+    document.getElementById('aniimo-minimum').addEventListener('change', () => showSelectedPlan(false));
 
     // Goal fields update live; no need to re-run the facility-allocation solve just because the
     // goal amount changed.

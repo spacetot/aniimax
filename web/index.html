@@ -139,6 +139,17 @@
                     </div>
 
                     <div class="production-steps">
+                        <h3>Aniimo</h3>
+                        <div class="mode-switch" role="radiogroup" aria-label="Aniimo setup">
+                            <label><input type="radio" name="aniimo-setup" id="aniimo-best" value="best" checked> Best</label>
+                            <label><input type="radio" name="aniimo-setup" id="aniimo-minimum" value="minimum"> Minimum</label>
+                        </div>
+                        <p class="hint small"><strong>Best</strong> puts a level-3 Aniimo with the facility's personality on every job, the fastest possible. <strong>Minimum</strong> uses the lowest ability level each recipe accepts, with no personality bonus: slower, but it shows what you need at the very least. Farmland and Woodland also need Aniimo to plant and harvest; any level works there.</p>
+                        <p class="hint small" id="aniimo-pending" style="display: none;">Still working out the Minimum setup...</p>
+                        <div id="aniimo-summary"></div>
+                    </div>
+
+                    <div class="production-steps">
                         <h3>What Each Facility Should Do</h3>
                         <p class="hint small">Each row is a single product; a facility split between multiple items gets one row per item. Crops that need a growing environment (Cool/Warm/Freeze/Scorching/Adequate) are grouped by which environment they use, showing which Heat Furnace/Cooling Unit/Sunlamp configuration covers them. Everything else is grouped the same way as the Facilities section above.</p>
                         <!-- Populated by app.js's renderFacilityPlan(): one section per
