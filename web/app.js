@@ -714,15 +714,29 @@ function abilityTag(name) {
     return `<span class="ability${a.dark ? ' dark' : ''}" style="--ability:${a.color}" title="${a.about}">${name}</span>`;
 }
 
+// A colored circle with the Aniimo level in it, for the facility plan's Aniimo column; the
+// tooltip has the ability, level, personality and what the ability does.
+function abilityDot(name, level, note) {
+    const a = ABILITY_BY_NAME.get(name);
+    const color = a ? a.color : '#888888';
+    const tip = `${name} Lv.${level}${note ? ` · ${note}` : ''}${a ? ` — ${a.about}` : ''}`;
+    return `<span class="ability-dot${a && a.dark ? ' dark' : ''}${note ? ' bonus' : ''}" style="--ability:${color}" title="${tip}" aria-label="${tip}">${level}</span>`;
+}
+
 function aniimoLabel(step) {
     const a = step.aniimo;
     if (!a) {
         // Crops and trees: the abilities their planting and harvesting jobs need.
         const tasks = step.aniimo_tasks || [];
         if (tasks.length === 0) return '-';
-        return `<span class="ability-list">${tasks.map(t => `${abilityTag(t.ability)} Lv.${t.level}`).join(' ')}</span>`;
+        return `<span class="ability-dots">${tasks.map(t => abilityDot(t.ability, t.level)).join('')}</span>`;
     }
-    return taskLabel(a, step.facility, true);
+    let note = '';
+    if (a.personality_bonus) {
+        const personality = FACILITIES.find(f => f.name === step.facility)?.personality;
+        note = `${personality ? `${personality} personality` : 'matching personality'} (+20% speed)`;
+    }
+    return `<span class="ability-dots">${abilityDot(a.ability, a.level, note)}</span>`;
 }
 
 // "Fire Lv.3 · Practical": one kind of Aniimo, with the facility's personality when the plan

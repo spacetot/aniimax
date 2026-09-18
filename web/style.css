@@ -1561,13 +1561,6 @@ details.explain p {
     color: #1d1f22;
 }
 
-.ability-list {
-    display: inline-flex;
-    flex-wrap: wrap;
-    gap: 0.25rem 0.5rem;
-    align-items: center;
-}
-
 /* How many of each ability a plan needs, like the game's Abilities screen. */
 .ability-strip {
     display: grid;
@@ -1616,4 +1609,35 @@ details.explain p {
 
 .ability-cell.zero .ability-count {
     color: var(--text-muted);
+}
+
+/* The facility plan's Aniimo column: one colored circle per ability, level inside. */
+.ability-dots {
+    display: inline-flex;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+    vertical-align: middle;
+}
+
+.ability-dot {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.5rem;
+    height: 1.5rem;
+    border-radius: 50%;
+    background: var(--ability);
+    color: #fff;
+    font-size: 0.75rem;
+    font-weight: 700;
+    cursor: help;
+}
+
+.ability-dot.dark {
+    color: #1d1f22;
+}
+
+/* A ring marks an Aniimo that has the facility's personality bonus. */
+.ability-dot.bonus {
+    box-shadow: 0 0 0 2px var(--surface), 0 0 0 3.5px var(--ability);
 }
