@@ -13,6 +13,7 @@ Updated for the full release, with a joint LP-based facility-allocation engine f
 ## Features
 
 **Web app**
+- **Simple or Advanced Setup**: Simple mode only asks for your RV level and assumes everything that level allows is built and upgraded; advanced mode sets every facility's count and level (and can start from the simple-mode setup)
 - **Live Production Plan**: Set your facilities to get the best achievable rate and what every facility should produce; no target amount needed
 - **Goal Timing**: Add a target amount afterward to see how long it'll take; updates instantly as you type, no re-solving
 - **Joint Facility Allocation**: Solves for every item and every facility at once, so shared resources (e.g. two recipes both wanting the same Farmland soybean supply) are split correctly instead of double-counted

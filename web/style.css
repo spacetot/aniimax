@@ -352,6 +352,20 @@ p {
     font-size: 0.85rem;
 }
 
+/* Simple / advanced input mode switch. */
+.mode-switch {
+    display: flex;
+    gap: 1.5rem;
+    margin: 1rem 0;
+}
+
+.mode-switch label {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    cursor: pointer;
+}
+
 /* Aniimo level and personality bonus, below a worked facility's tiers. */
 .worker-row {
     margin-top: 0.75rem;

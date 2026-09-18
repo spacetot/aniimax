@@ -1,6 +1,9 @@
 // Aniimax Web Application
 
-import { FACILITIES, FACILITY_CATEGORIES, FACILITY_CATEGORY_BY_NAME } from './facility-config.js';
+import {
+    FACILITIES, FACILITY_CATEGORIES, FACILITY_CATEGORY_BY_NAME,
+    MAX_HOME_LEVEL, COUNTS_CONFIRMED_UP_TO, simpleSetup,
+} from './facility-config.js';
 
 let wasmReady = false;
 
@@ -294,6 +297,7 @@ function getPersistedFieldIds() {
     return [
         'target-amount', 'current-amount',
         'prioritize-byproducts',
+        'mode-simple', 'mode-advanced', 'home-level',
         'ecological-module-level', 'kitchen-module-level',
         'resource-detector-level', 'crafting-module-level',
         'rate-unit'
@@ -316,6 +320,11 @@ function readStorage() {
 // renamed Mineral Pile to Mine and the Mineral Detector module to Resource Detector.
 function migrateSavedConfig(data) {
     if (!data || typeof data !== 'object') return data;
+    // Saves from before simple mode existed hold a hand-entered setup; keep showing it.
+    if (data['mode-simple'] === undefined && data.facilityTiers) {
+        data['mode-simple'] = false;
+        data['mode-advanced'] = true;
+    }
     const tiers = data.facilityTiers;
     if (tiers && tiers['Mine'] === undefined && tiers['Mineral Pile'] !== undefined) {
         tiers['Mine'] = tiers['Mineral Pile'];
@@ -420,6 +429,78 @@ async function initWasm() {
     }
 }
 
+// --- Simple / advanced mode -----------------------------------------------------------
+// Simple mode takes just the RV (Homeland) level and assumes everything that level allows is built
+// and upgraded (see `simpleSetup` in facility-config.js). Advanced mode is the full per-facility
+// input. Switching modes never overwrites the advanced inputs; "Customize in advanced mode" copies
+// the simple setup into them on purpose.
+
+function isSimpleMode() {
+    return document.getElementById('mode-simple').checked;
+}
+
+function selectedHomeLevel() {
+    return numberOrDefault(document.getElementById('home-level').value, MAX_HOME_LEVEL);
+}
+
+function populateHomeLevels() {
+    const select = document.getElementById('home-level');
+    const options = [];
+    for (let level = 1; level <= MAX_HOME_LEVEL; level++) {
+        options.push(`<option value="${level}">${level}${level === MAX_HOME_LEVEL ? ' (everything unlocked)' : ''}</option>`);
+    }
+    select.innerHTML = options.join('');
+    select.value = String(MAX_HOME_LEVEL);
+}
+
+// One entry per built facility, e.g. "10 Farmland Lv.2", plus a note when counts above the
+// confirmed RV levels are estimates.
+function renderSimpleSummary() {
+    const homeLevel = selectedHomeLevel();
+    const { facilities } = simpleSetup(homeLevel);
+    const built = FACILITIES
+        .map(f => ({ name: f.name, tier: facilities[f.name][0], hasLevels: f.hasLevels !== false }))
+        .filter(({ tier }) => tier.count > 0)
+        .map(({ name, tier, hasLevels }) => `${tier.count} ${name}${hasLevels ? ` Lv.${tier.level}` : ''}`);
+    const estimate = homeLevel > COUNTS_CONFIRMED_UP_TO
+        ? ` Building counts are only confirmed up to RV level ${COUNTS_CONFIRMED_UP_TO}; above that they're carried forward and may be low, so check them in advanced mode.`
+        : '';
+    document.getElementById('simple-summary').textContent =
+        `Assumes: ${built.join(', ')}, with every upgrade module maxed.${estimate}`;
+}
+
+function applyConfigMode() {
+    const simple = isSimpleMode();
+    document.getElementById('simple-config').style.display = simple ? 'block' : 'none';
+    document.getElementById('advanced-config').style.display = simple ? 'none' : 'block';
+    if (simple) renderSimpleSummary();
+}
+
+// Copies the simple-mode setup into the advanced inputs and switches to advanced mode, so the
+// player can start from "everything at my RV level" and adjust from there.
+function customizeInAdvancedMode() {
+    const { facilities, modules } = simpleSetup(selectedHomeLevel());
+    FACILITIES.forEach(f => {
+        facilityTiers[f.name] = facilities[f.name].map(t => ({ ...t }));
+        renderTierRows(f.name);
+    });
+    document.getElementById('ecological-module-level').value = modules.ecological_module;
+    document.getElementById('kitchen-module-level').value = modules.kitchen_module;
+    document.getElementById('resource-detector-level').value = modules.resource_detector;
+    document.getElementById('crafting-module-level').value = modules.crafting_module;
+    document.getElementById('mode-advanced').checked = true;
+    applyConfigMode();
+    saveInputsToStorage();
+    document.getElementById('advanced-config').scrollIntoView({ behavior: 'smooth' });
+}
+
+function attachModeHandlers() {
+    document.getElementById('mode-simple').addEventListener('change', applyConfigMode);
+    document.getElementById('mode-advanced').addEventListener('change', applyConfigMode);
+    document.getElementById('home-level').addEventListener('change', renderSimpleSummary);
+    document.getElementById('customize-btn').addEventListener('click', customizeInAdvancedMode);
+}
+
 // Get plan-level input values from the form (facilities/modules/prioritize-byproducts, nothing
 // goal-related, since find_plan doesn't need a target). Currency is always coins: the full
 // release removed Bud Tickets, the only other sellable currency.
@@ -427,6 +508,17 @@ function getPlanInputValues() {
     // `facilityTiers` is the live source of truth for owned counts (kept in sync with the DOM by
     // `attachFacilityTierHandlers`), sent straight through as a list of tiers per facility; see
     // `JsPlanInput::facilities` in wasm.rs for the shape (`[{count, level}, ...]` per facility).
+    if (isSimpleMode()) {
+        const { facilities, modules } = simpleSetup(selectedHomeLevel());
+        return {
+            currency: 'coins',
+            prioritize_byproducts: document.getElementById('prioritize-byproducts').checked,
+            facilities,
+            modules,
+            workers: facilityWorkers
+        };
+    }
+
     const facilities = {};
     FACILITIES.forEach(f => {
         facilities[f.name] = facilityTiers[f.name].map(t => ({
@@ -1106,9 +1198,12 @@ document.addEventListener('DOMContentLoaded', () => {
     const savedData = readStorage();
     initFacilityTiers(savedData);
     renderFacilityCards();
+    populateHomeLevels();
     loadInputsFromStorage(savedData);
     attachAutoSave();
     attachFacilityTierHandlers();
+    attachModeHandlers();
+    applyConfigMode();
     initWasm();
 
     document.getElementById('optimize-btn').addEventListener('click', runFindPlan);

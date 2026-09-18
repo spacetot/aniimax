@@ -30,6 +30,23 @@
 
                 <p class="hint small">Your inputs are saved automatically in this browser. They'll still be here next time you open this page. <button type="button" id="clear-saved-btn" class="toggle-button">Clear saved values</button></p>
 
+                <div class="mode-switch" role="radiogroup" aria-label="Input mode">
+                    <label><input type="radio" name="config-mode" id="mode-simple" value="simple" checked> Simple</label>
+                    <label><input type="radio" name="config-mode" id="mode-advanced" value="advanced"> Advanced</label>
+                </div>
+
+                <div id="simple-config">
+                    <p class="hint">Pick your RV level and the calculator assumes you've built and upgraded everything that level allows.</p>
+                    <div class="input-row">
+                        <div class="input-field">
+                            <label for="home-level">RV level</label>
+                            <select id="home-level"></select>
+                        </div>
+                    </div>
+                    <p class="hint small" id="simple-summary"></p>
+                    <p class="hint small"><button type="button" id="customize-btn" class="toggle-button">Customize in advanced mode</button> to change any count or level.</p>
+                </div>
+
                 <div class="config-group">
                     <div class="input-row">
                         <div class="input-field checkbox-field">
@@ -43,6 +60,7 @@
 
                 </div>
 
+                <div id="advanced-config">
                 <h3>Facilities</h3>
                 <p class="hint">Set the count and level for each facility you have.</p>
 
@@ -86,6 +104,7 @@
                             <input type="number" id="crafting-module-level" value="0" min="0" max="10">
                         </div>
                     </div>
+                </div>
                 </div>
 
                 <button id="optimize-btn" class="optimize-btn">
