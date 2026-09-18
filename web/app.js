@@ -681,23 +681,50 @@ const ENVIRONMENT_MODE_ORDER = ['Warm', 'Scorching', 'Cool', 'Freeze', 'Adequate
 
 // "Fire Lv.3 · Practical" for a row that needs a specific Aniimo, or '-' when it doesn't (crops,
 // trees, idle facilities).
+// Every Aniimo ability in the game's own order, with its in-game color and what it's for.
+// `dark` marks colors light enough to need dark text.
+const ABILITIES = [
+    { name: 'Fire', color: '#e5484d', about: 'Cooking, smelting and heat' },
+    { name: 'Grass', color: '#3fa36b', about: 'Planting seeds and gathering' },
+    { name: 'Water', color: '#2b8fe8', about: 'Brewing, fetching water and watering' },
+    { name: 'Earth', color: '#b39a74', about: 'Reclaiming land and mining' },
+    { name: 'Lightning', color: '#e6c317', about: 'Electricity', dark: true },
+    { name: 'Ice', color: '#45c4de', about: 'Cooling the homeland' },
+    { name: 'Wind', color: '#2fbfa5', about: 'Processing with wind' },
+    { name: 'Dark', color: '#7d4bb3', about: 'Harvesting, cutting, pickling and drying' },
+    { name: 'Light', color: '#f5a524', about: 'Lighting the homeland', dark: true },
+    { name: 'Hauling', color: '#5f7fd1', about: 'Carrying produce to storage' },
+    { name: 'Artisanship', color: '#5fb14f', about: 'Handcrafted goods' },
+    { name: 'Leisure', color: '#e8678a', about: 'Making things while playing' },
+    { name: 'Perfumery', color: '#b877d9', about: 'Perfumes and incense' },
+];
+const ABILITY_BY_NAME = new Map(ABILITIES.map(a => [a.name, a]));
+
+// A colored ability tag, like the game's.
+function abilityTag(name) {
+    const a = ABILITY_BY_NAME.get(name);
+    if (!a) return name;
+    return `<span class="ability${a.dark ? ' dark' : ''}" style="--ability:${a.color}" title="${a.about}">${name}</span>`;
+}
+
 function aniimoLabel(step) {
     const a = step.aniimo;
     if (!a) {
         // Crops and trees: the abilities their planting and harvesting jobs need.
         const tasks = step.aniimo_tasks || [];
         if (tasks.length === 0) return '-';
-        return tasks.map(t => `${t.ability} Lv.${t.level}`).join(', ');
+        return `<span class="ability-list">${tasks.map(t => `${abilityTag(t.ability)} Lv.${t.level}`).join(' ')}</span>`;
     }
-    return taskLabel(a, step.facility);
+    return taskLabel(a, step.facility, true);
 }
 
 // "Fire Lv.3 · Practical": one kind of Aniimo, with the facility's personality when the plan
-// counts on its bonus.
-function taskLabel(task, facility) {
-    if (!task.personality_bonus) return `${task.ability} Lv.${task.level}`;
+// counts on its bonus. `tagged` shows the ability as a colored tag.
+function taskLabel(task, facility, tagged = false) {
+    const ability = tagged ? abilityTag(task.ability) : task.ability;
+    if (!task.personality_bonus) return `${ability} Lv.${task.level}`;
     const personality = FACILITIES.find(f => f.name === facility)?.personality;
-    return `${task.ability} Lv.${task.level} · ${personality || 'matching personality'}`;
+    return `${ability} Lv.${task.level} · ${personality || 'matching personality'}`;
 }
 
 function facilityPlanTable(rows) {
@@ -750,6 +777,7 @@ function renderAniimoSummary(plan) {
     if (groups.size === 0) {
         container.innerHTML = '<p class="hint">Nothing in this plan needs an Aniimo.</p>';
         collapsedSummary.textContent = 'No Aniimo needed.';
+        document.getElementById('aniimo-abilities').innerHTML = '';
         return;
     }
     // An Aniimo can do any job of its ability at or below its level, so work that fits in a
@@ -775,10 +803,11 @@ function renderAniimoSummary(plan) {
         .map(g => {
             total += g.count;
             const where = [...g.where.entries()].map(([place, n]) => `${n > 1 ? n + '× ' : ''}${place}`).join(', ');
-            return `<tr><td data-label="Aniimo">${g.label}</td><td data-label="How many">${g.count}</td><td data-label="Busy on average">${g.busy.toFixed(1)}</td><td data-label="Where">${where}</td></tr>`;
+            const [, rest] = g.label.split(/ (?=Lv\.)/);
+            return `<tr><td data-label="Aniimo">${abilityTag(g.ability)} ${rest || ''}</td><td data-label="How many">${g.count}</td><td data-label="Busy on average">${g.busy.toFixed(1)}</td><td data-label="Where">${where}</td></tr>`;
         })
         .join('');
-    const haulingRow = `<tr><td data-label="Aniimo">Hauling, any level</td><td data-label="How many">1+</td><td data-label="Busy on average">?</td><td data-label="Where">Carries produce to storage. How much work this is isn't known yet; add more if produce piles up.</td></tr>`;
+    const haulingRow = `<tr><td data-label="Aniimo">${abilityTag('Hauling')} any level</td><td data-label="How many">1+</td><td data-label="Busy on average">?</td><td data-label="Where">Carries produce to storage. How much work this is isn't known yet; add more if produce piles up.</td></tr>`;
 
     let capNote = '';
     const cap = isSimpleMode() ? ANIIMO_MAX[selectedHomeLevel() - 1] : null;
@@ -792,6 +821,15 @@ function renderAniimoSummary(plan) {
     collapsedSummary.textContent = cap
         ? `${total} Aniimo · your homeland holds ${cap}${total > cap ? ' (too many; see the list)' : ''}`
         : `${total} Aniimo at most`;
+    // How many of each ability the plan needs, in the game's order, like its Abilities screen.
+    const needed = new Map(ABILITIES.map(a => [a.name, 0]));
+    kept.forEach(g => needed.set(g.ability, (needed.get(g.ability) || 0) + g.count));
+    document.getElementById('aniimo-abilities').innerHTML = ABILITIES.map(a => {
+        const n = a.name === 'Hauling' ? `${needed.get(a.name) + 1}+` : needed.get(a.name);
+        const zero = n === 0;
+        return `<div class="ability-cell${zero ? ' zero' : ''}" style="--ability:${a.color}" title="${a.name}: ${a.about}">
+            <span class="ability-count">${n}</span><span class="ability-name">${a.name}</span></div>`;
+    }).join('');
     container.innerHTML = `
         <div class="table-wrapper">
             <table class="facility-plan-table">

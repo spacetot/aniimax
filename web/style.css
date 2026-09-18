@@ -1543,3 +1543,77 @@ details.explain p {
 #aniimo-body {
     margin-top: 1rem;
 }
+
+/* Aniimo abilities in their in-game colors. */
+.ability {
+    display: inline-block;
+    padding: 0.05rem 0.5rem;
+    border-radius: 999px;
+    background: var(--ability);
+    color: #fff;
+    font-size: 0.75rem;
+    font-weight: 600;
+    line-height: 1.5;
+    white-space: nowrap;
+}
+
+.ability.dark {
+    color: #1d1f22;
+}
+
+.ability-list {
+    display: inline-flex;
+    flex-wrap: wrap;
+    gap: 0.25rem 0.5rem;
+    align-items: center;
+}
+
+/* How many of each ability a plan needs, like the game's Abilities screen. */
+.ability-strip {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(58px, 1fr));
+    gap: 0.35rem;
+    margin: 0.85rem 0 0;
+}
+
+@media (min-width: 720px) {
+    .ability-strip {
+        grid-template-columns: repeat(13, minmax(0, 1fr));
+        gap: 0.3rem;
+    }
+}
+
+.ability-cell {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 0.4rem 0.2rem 0.35rem;
+    border-radius: 8px;
+    background: var(--surface-2);
+    border-top: 3px solid var(--ability);
+}
+
+.ability-count {
+    font-size: 1.1rem;
+    font-weight: 700;
+    line-height: 1.2;
+    color: var(--ability);
+}
+
+.ability-name {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-size: 0.6rem;
+    color: var(--text-muted);
+    white-space: nowrap;
+}
+
+.ability-cell.zero {
+    opacity: 0.35;
+    border-top-color: var(--border);
+}
+
+.ability-cell.zero .ability-count {
+    color: var(--text-muted);
+}
