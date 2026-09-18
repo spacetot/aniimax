@@ -1646,6 +1646,8 @@ struct RecipeInfo {
     /// `false` if the recipe's numbers haven't been checked in game yet (see
     /// `data/unverified.csv`).
     verified: bool,
+    /// For crops and trees, each Aniimo job in growing order: `(step, ability, min level)`.
+    jobs: Vec<(String, String, u32)>,
 }
 
 /// Get the full recipe list for every item in the game data, grouped by nothing in particular
@@ -1655,6 +1657,7 @@ pub fn get_all_items() -> String {
     let items = get_embedded_items();
     let requirements = embedded_aniimo_requirements();
     let unverified = embedded_unverified();
+    let grower_steps = embedded_grower_steps();
     let recipes: Vec<RecipeInfo> = items
         .iter()
         .map(|item| RecipeInfo {
@@ -1673,6 +1676,7 @@ pub fn get_all_items() -> String {
             byproduct: item.byproduct.clone(),
             aniimo: requirements.get(&item.name).map(|(ability, level)| (ability.to_string(), level)),
             verified: !unverified.iter().any(|(name, facility)| *name == item.name && *facility == item.facility),
+            jobs: grower_steps.get(&item.name).iter().map(|s| (s.step.clone(), s.ability.clone(), s.min_level)).collect(),
         })
         .collect();
 

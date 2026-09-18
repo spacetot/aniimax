@@ -566,9 +566,8 @@ function renderStrategy() {
     document.getElementById('coins-config').style.display = levelUp ? 'none' : 'block';
     if (!levelUp) return;
 
-    const select = document.getElementById('level-up-target');
-    select.disabled = isSimpleMode();
-    if (isSimpleMode() && LEVEL_UP_COSTS[levelUpTarget()]) select.value = String(levelUpTarget());
+    // Simple mode always plans the next RV level, so only Advanced picks one.
+    document.getElementById('level-up-target-row').style.display = isSimpleMode() ? 'none' : '';
 
     const costEl = document.getElementById('level-up-cost');
     const stockDetails = document.getElementById('level-up-stock');
@@ -1643,13 +1642,24 @@ function formatRecipeYield(recipe) {
     return text;
 }
 
-// "Fire Lv.2+ · best Lv.3 Practical": the minimum ability level a recipe accepts, then the best
-// Aniimo for it. '-' for crops and trees.
+// "Fire Lv.2+, best Lv.3 Practical": the minimum ability level a recipe accepts, then the best
+// Aniimo for it. Crops and trees list the ability of each job (sowing, reaping and so on).
 function formatRecipeAniimo(recipe, facility) {
-    if (!recipe.aniimo) return '-';
+    if (!recipe.aniimo) {
+        const jobs = recipe.jobs || [];
+        if (jobs.length === 0) return '-';
+        return `<span class="job-list">${jobs.map(([step, ability, level]) =>
+            `<span class="job"><span class="job-step">${step}</span> ${abilityTag(ability)}${level > 1 ? ` Lv.${level}+` : ''}</span>`).join('')}</span>`;
+    }
     const [ability, minLevel] = recipe.aniimo;
     const best = `best Lv.3${facility.personality ? ' ' + facility.personality : ''}`;
-    return `${ability} Lv.${minLevel}+ · ${best}`;
+    return `<span>${abilityTag(ability)} Lv.${minLevel}+<span class="recipe-best">${best}</span></span>`;
+}
+
+// "44 coins", or what a level-up material is for.
+function formatRecipeSell(recipe) {
+    if (recipe.sell_currency === 'none') return '<span class="hint small">RV level-ups</span>';
+    return `${formatNumber(recipe.sell_value)} ${recipe.sell_value === 1 ? 'coin' : 'coins'}`;
 }
 
 function formatRecipeModule(recipe) {
@@ -1679,16 +1689,18 @@ function renderRecipeTables(recipes) {
         if (facilitiesInCategory.length === 0) return '';
 
         const tables = facilitiesInCategory.map(f => {
+            // `data-label` names each cell when rows stack on phones; empty cells are left out there.
+            const cell = (label, value) => `<td data-label="${label}"${value === '-' ? ' class="empty"' : ''}>${value}</td>`;
             const rows = byFacility.get(f.name).map(r => `
                 <tr${r.verified === false ? ' class="unverified"' : ''}>
-                    <td>${prettyItem(r.name)}${r.verified === false ? ' <span class="info-icon" data-tooltip="Not yet checked in game.">?</span>' : ''}</td>
-                    <td>${r.facility_level}</td>
-                    <td>${formatRecipeInputs(r)}</td>
-                    <td>${formatRecipeYield(r)}</td>
-                    <td>${r.workload ? `${r.workload} workload` : formatRecipeTime(r.production_time)}</td>
-                    <td>${r.sell_value} Coins</td>
-                    <td>${formatRecipeModule(r)}</td>
-                    <td>${formatRecipeAniimo(r, f)}</td>
+                    <td class="recipe-name">${prettyItem(r.name)}${r.verified === false ? ' <span class="info-icon" data-tooltip="Not yet checked in game.">?</span>' : ''}</td>
+                    ${cell('Level', r.facility_level)}
+                    ${cell('Inputs', formatRecipeInputs(r))}
+                    ${cell('Yield', formatRecipeYield(r))}
+                    ${cell('Time', r.workload ? `${r.workload} workload` : formatRecipeTime(r.production_time))}
+                    ${cell('Sell', formatRecipeSell(r))}
+                    ${cell('Module', formatRecipeModule(r))}
+                    ${cell('Aniimo', formatRecipeAniimo(r, f))}
                 </tr>
             `).join('');
 
@@ -1706,7 +1718,7 @@ function renderRecipeTables(recipes) {
                                     <th>Time <span class="info-icon" data-tooltip="Grow time for crops and trees. Everything else lists workload: how long it takes depends on the Aniimo working it (108 workload takes 108s at level 1, 36s at level 2, 27s at level 3).">?</span></th>
                                     <th>Sell</th>
                                     <th>Module</th>
-                                    <th>Aniimo <span class="info-icon" data-tooltip="The lowest ability level that can make this, and the best Aniimo for it: level 3 with the facility's personality (+20% speed).">?</span></th>
+                                    <th>Aniimo <span class="info-icon" data-tooltip="The lowest ability level that can make this, and the best Aniimo for it: level 3 with the facility's personality (+20% speed). For crops and trees, the ability each job needs, in order.">?</span></th>
                                 </tr>
                             </thead>
                             <tbody>${rows}</tbody>

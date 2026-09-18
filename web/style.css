@@ -1779,3 +1779,136 @@ details.explain p {
 .level-up-coins strong {
     color: var(--text);
 }
+
+/* Popups use more of a phone's width. */
+@media (max-width: 600px) {
+    .modal {
+        padding: 0.5rem;
+    }
+
+    .modal-content {
+        margin: 0.5rem auto;
+    }
+
+    .modal-body {
+        padding: 1rem;
+    }
+
+    .math-block {
+        padding: 0.75rem 0.4rem;
+    }
+}
+
+/* Crop and tree jobs in the recipe list: "Sowing [Grass]". */
+.job-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+}
+
+.job {
+    white-space: nowrap;
+}
+
+.job-step {
+    display: inline-block;
+    min-width: 5.5rem;
+    color: var(--text-muted);
+    font-size: 0.75rem;
+}
+
+.recipe-best {
+    display: block;
+    color: var(--text-muted);
+    font-size: 0.75rem;
+    white-space: nowrap;
+}
+
+/* Recipe tables become one labelled block per recipe on phones. */
+@media (max-width: 600px) {
+    .recipe-table thead {
+        display: none;
+    }
+
+    .recipe-table tr {
+        display: block;
+        padding: 0.6rem 0.75rem;
+        border-bottom: 1px solid var(--border);
+    }
+
+    .recipe-table td {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        gap: 1rem;
+        padding: 0.12rem 0;
+        border: none;
+        text-align: right;
+    }
+
+    .recipe-table td.recipe-name {
+        justify-content: flex-start;
+        gap: 0;
+        font-weight: 600;
+        text-align: left;
+        padding-bottom: 0.3rem;
+    }
+
+    /* The "not checked" tooltip hangs from the name cell, not the icon, so a long name can't
+       push it past the edge. */
+    .recipe-table td.recipe-name {
+        position: relative;
+    }
+
+    .recipe-table td.recipe-name .info-icon {
+        position: static;
+    }
+
+    .recipe-table td.recipe-name [data-tooltip]::after {
+        left: 0;
+        transform: none;
+    }
+
+    .recipe-table td.empty {
+        display: none;
+    }
+
+    .recipe-table td[data-label]::before {
+        content: attr(data-label);
+        color: var(--text-muted);
+        font-size: 0.75rem;
+        text-align: left;
+        white-space: nowrap;
+    }
+
+    .recipe-table .job-list {
+        align-items: flex-end;
+    }
+
+    .recipe-table .recipe-best {
+        text-align: right;
+    }
+}
+
+/* Table header tooltips open downward (a scrolling table would clip them above), and the last
+   column's stays inside the table's right edge. */
+.table-wrapper th [data-tooltip]::after {
+    bottom: auto;
+    top: 100%;
+    margin-bottom: 0;
+    margin-top: 0.5rem;
+    text-transform: none;
+    letter-spacing: normal;
+}
+
+.table-wrapper th:last-child [data-tooltip]::after {
+    left: auto;
+    right: 0;
+    transform: none;
+}
+
+/* Time and Sell stay on one line; Inputs wraps instead. */
+.recipe-table td:nth-child(5),
+.recipe-table td:nth-child(6) {
+    white-space: nowrap;
+}

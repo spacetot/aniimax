@@ -102,7 +102,7 @@
 
                     <div id="level-up-config">
                         <p class="hint">Gets the coins, Woodworking Bench item and Chimney Kiln item for your next RV level as soon as possible, then earns as many coins as that leaves room for.</p>
-                        <div class="input-row">
+                        <div class="input-row" id="level-up-target-row">
                             <div class="input-field">
                                 <label for="level-up-target">Level up to RV</label>
                                 <select id="level-up-target"></select>
@@ -302,36 +302,42 @@
                 <button class="close-button" onclick="closeMath()">&times;</button>
             </div>
             <div class="modal-body">
-                <h3>The Exact Planner</h3>
-                <p>The whole problem is solved at once as a mixed-integer program: every recipe gets a rate and a whole number of plots or machines set to it, everything made must cover what other recipes use plus what's sold, each facility can't use more units than you own (at a high enough level for each recipe), and each environment building runs one mode covering one mix of plots. The objective is coins per second from everything sold, minus seed costs. For a level-up, it's first how many level-ups a day the plan could keep up, counting what you already have, then the most coins at that pace, then as much extra of the level-up items as spare Bench and Kiln time allows; the Woodworking Bench and Chimney Kiln take turns between tiers, since each tier is made from the one below. The <a href="https://highs.dev" target="_blank" rel="noopener">HiGHS</a> solver either proves its plan is the best possible, which the results say, or reports how close it got. Every plan is re-checked independently before it's shown; if the exact planner can't run, the steps below make the plan instead.</p>
+                <h3>The model</h3>
+                <p>Every plan is one mixed-integer program covering every recipe and facility at once, solved with <a href="https://highs.dev" target="_blank" rel="noopener">HiGHS</a>. Each recipe your facility levels and modules unlock, \(r\), gets a rate \(b_r\) (batches per second) and a whole number of units \(u_r\) set to it: plots for a crop, machines for a processed item.</p>
+                <div class="math-block">\[ \max \ \sum_i p_i \, s_i \;-\; \sum_r c_r \, b_r \]</div>
+                <p>where \(s_i\) is how much of item \(i\) is sold per second at price \(p_i\), and \(c_r\) is a crop's seed cost. Subject to:</p>
+                <ul>
+                    <li><strong>Whole units.</strong> \(b_r \, t_r \le u_r\), with \(u_r\) a whole number and \(t_r\) the time per batch. A unit runs one recipe and is left running.</li>
+                    <li><strong>Item balance.</strong> Everything made covers what other recipes use plus what's sold. A quick variant makes the same item as the regular one.</li>
+                    <li><strong>What you own.</strong> For every facility and level \(L\), the units on recipes needing level \(L\) or higher add up to at most what you own at that level. A higher-level plot can run a lower-level recipe.</li>
+                    <li><strong>Growing environments.</strong> Plots of a crop needing Cool, Warm, Freeze, Scorching or Adequate must be covered by a Heat Furnace, Cooling Unit or Sunlamp set to that mode (see below).</li>
+                </ul>
+                <p>HiGHS either proves the plan is the best possible, which the results say, or stops after 30 seconds and reports how far from the best it could be. Every plan is then re-checked on its own before it's shown.</p>
 
-                <h3>1. Profit per Item</h3>
-                <p>For every item, we compute net profit per batch and the time to make one, tracing its full ingredient chain back to whatever facilities produce the raw materials.</p>
-                <div class="math-block">\[ \text{profit}_{\text{batch}} = (\text{yield} \times \text{sell_price}) - \text{raw_cost} \]</div>
-                <p>Dividing by batch time gives a per-second rate, but that rate alone doesn't say how much of each facility one batch actually needs. For that we track <strong>utilization</strong>: batches per second at this item's own facility, plus the same for every facility touched anywhere upstream in its ingredient tree (e.g. dried_bean_curd pulls from Jukebox Dryer, plus Carousel Mill for its tofu, which in turn draws soybean from Farmland).</p>
+                <h3>Time per batch</h3>
+                <p>Crops and trees take their grow time. Everything else has a workload, and how long it takes depends on the Aniimo working it: 108 workload takes 108s at ability level 1, 36s at level 2 and 27s at level 3. The facility's personality makes it 20% faster.</p>
+                <div class="math-block">\[ t = \frac{\text{workload}}{k \times 1.2^{\,\text{personality}}} \]</div>
+                <p>with \(k\) = 1, 3 or 4 for ability level 1, 2 or 3, and the personality term counted only when the Aniimo has the facility's personality.</p>
 
-                <h3>2. Environment Coverage</h3>
-                <p>Some crops need a growing environment (Cool/Warm/Freeze/Scorching/Adequate), supplied by Heat Furnace/Cooling Unit/Sunlamp buildings. Each building covers a fixed 2D area around it, so how many plots of each facility type it can cover is an exact geometric packing problem, solved once up front per owned building using each candidate item's standalone profit-per-plot to prioritize which types get coverage. This produces a hard cap on how much of each covered facility type is usable, feeding into the allocation below as an extra capacity limit.</p>
+                <h3>Environment coverage</h3>
+                <p>Each Heat Furnace, Cooling Unit and Sunlamp is 2×2 tiles and covers a 9×9 area centered on it. A plot counts as covered if any part of it is inside, and everything snaps to quarter tiles. Every useful way one building can cover a mix of Farmland, Woodland and the rest is worked out once by exact packing; the plan then picks a mode and one of those mixes for each building.</p>
 
-                <h3>3. Joint Facility Allocation</h3>
-                <p>Every owned facility can be shared by several candidate items at once, so picking each item's rate independently would double-count shared capacity (two recipes both claiming the same Farmland soybean plots as if the other didn't exist). A facility can also be owned across multiple levels (e.g. some plots upgraded further than others); a higher-level plot can run a lower-level recipe too, so capacity is tracked per level threshold rather than as one flat total. Instead of picking rates independently, we solve one linear program across every candidate item and every owned facility simultaneously:</p>
-                <div class="math-block">\[ \max \sum_i \text{profit}_{\text{batch},i} \cdot x_i \quad \text{s.t.} \quad \sum_i \text{utilization}_{i,f} \cdot x_i \leq \text{capacity}_f \ \ \forall f \]</div>
-                <p>Where \(x_i\) is item \(i\)'s batches/sec and \(f\) ranges over every owned facility and level threshold, plus each environment coverage cap from step 2. This is solved exactly (not greedily) with an off-the-shelf simplex solver, so the result is the provably-best combination of rates achievable given shared upstream supply and coverage.</p>
+                <h3>Level up</h3>
+                <p>A level-up costs coins \(C_0\) plus a Woodworking Bench item and a Chimney Kiln item, \(C_1\) and \(C_2\), and you may already have some of each, \(S_j\). The plan finds the most level-ups per day, \(\lambda\), it could keep up, where for coins and each item:</p>
+                <div class="math-block">\[ \text{made}_j \ \ge\ \frac{\lambda \, (C_j - S_j)}{86400} \]</div>
+                <p>(\(\text{made}_j\) per second), so the level-up takes \(1/\lambda\) days. Stock of anything lower in a chain (Wood Blocks, Mineral Sand, a lower tier) counts toward what's made, since the Bench and Kiln process it up. Two more solves follow, each keeping what the last one found: the most coins at that pace, then as much extra of the level-up items as spare Bench and Kiln time allows. That's why ore often finishes before wood and shows up as surplus.</p>
+                <p>Each tier takes 8 of the tier below (4 for the last), so the Bench and Kiln switch between tiers rather than running one recipe like other processors.</p>
 
-                <h3>4. Rounding to Whole Units: Growers</h3>
-                <p>The linear program's solution is continuous, e.g. "62% of Farmland's soybean plots." A grower facility (Farmland, Woodland, Mine, and similar) can't actually run a fractional plot; each unit commits to one crop for its whole cycle. So every grower facility's fractional shares get converted to whole counts using the largest-remainder method (the same apportionment technique used to allocate parliament seats), landing as close to the true fractions as an integer solution allows.</p>
-                <p>Once the counts are settled, the linear program solves one last time with each item capped at its whole units. A plot or Well rounded up produces its full output, not just the fraction the continuous solve needed, and every chain using the same item shares the same units, so the extra goes to whichever recipe can use it (a spare processor unit can take on a new recipe) or sells directly. Units the rounding left idle grow the facility's most valuable crop to sell.</p>
+                <h3>Prioritizing Wood Blocks and Mineral Sand</h3>
+                <p>With Most coins and this ticked, the plan first finds the most Wood Blocks, and the most Mineral Sand, your facilities can make per second. It then earns as many coins as it can while still making that much of each.</p>
 
-                <h3>5. Whole-Unit Dedication: Processors</h3>
-                <p>A processor facility (Carousel Mill, Claw Game Cooker, and similar) isn't tied to one crop for a whole cycle the way a grower is, but it still can't be time-shared between recipes in practice. A player sets one up to run one recipe continuously, not a "38% of the time" split. If a chain needs two different items made at the same facility type (an intermediate step plus the final item), each one needs its own dedicated unit, not one unit alternating. When the linear program's solution would ask a processor facility to serve more distinct recipes than it has units, we keep only the most profitable candidates (one dedicated unit each) and drop the rest, then re-solve so their freed-up upstream supply finds a genuine next-best use rather than being silently discarded.</p>
-
-                <h3>6. Refining the Choice</h3>
-                <p>Environment coverage (step 2) is priced from each item's own standalone economics, before the full joint solve runs. Occasionally that naive pricing favors a chain that turns out worse once every other constraint is accounted for, either because it never ends up producing anything once the rest of the plan settles, or because a competing chain would have used the same scarce coverage more effectively overall. After solving once, the algorithm checks which chains actually end up producing something, then tries excluding a losing candidate and re-solving; the exclusion is kept only if the resulting plan's real total is genuinely better.</p>
-
-                <h3>7. Time to Reach a Goal</h3>
-                <p>Once the plan's rates are settled, each item contributes nothing until its own lead time has passed (time for its first batch to clear the chain), then its steady rate after that:</p>
+                <h3>Time to reach a goal</h3>
+                <p>Each product starts adding up once its first batch clears its ingredient chain (its lead time), then keeps its steady rate:</p>
                 <div class="math-block">\[ \text{amount}(t) = \sum_i \text{rate}_i \cdot \max(0,\ t - \text{lead}_i) \]</div>
-                <p>This is monotonically non-decreasing in \(t\), so the smallest \(t\) reaching your target amount is found with a binary search rather than solving anything analytically.</p>
+                <p>This only ever grows with \(t\), so the time to reach a target is found by binary search.</p>
+
+                <h3>The backup planner</h3>
+                <p>If the exact planner can't run (rare; reloading the page usually fixes it), an older planner steps in. It solves the same problem as a continuous linear program, rounds to whole plots and one recipe per machine, then re-solves. Its plans are usually close to the best but not guaranteed, and the results say when it was used.</p>
             </div>
         </div>
     </div>
@@ -348,21 +354,23 @@
                 <p><strong>Simple</strong>: pick your RV level, and the calculator assumes you've built and upgraded everything that level allows. <strong>Advanced</strong>: set the count and level of every facility and upgrade module yourself. "Customize in Advanced" copies the Simple setup over as a starting point.</p>
 
                 <h3>2. Pick a strategy</h3>
-                <p><strong>Level up</strong> gets everything your next RV level costs as soon as possible: its coins, a Woodworking Bench item and a Chimney Kiln item. Enter what you already have under "What you already have"; Wood Blocks, Mineral Sand and lower tiers count too, since the Bench and Kiln process them up. Once the level-up's pace is set, the plan earns as many coins as it can. Level-up costs are known from RV 7 on.</p>
+                <p><strong>Level up</strong> gets everything your next RV level costs as soon as possible: its coins, a Woodworking Bench item and a Chimney Kiln item. Under "What you already have", enter what you've got; Wood Blocks, Mineral Sand and lower tiers count too, since the Bench and Kiln process them up. The plan still earns as many coins as it can on the way. Level-up costs are known from RV 7 on. In Advanced you can pick which RV level to plan for.</p>
                 <p><strong>Most coins</strong> goes for coins alone. Ticking "Prioritize Wood Blocks and Mineral Sand" makes as much of those as possible first, then as many coins as that allows.</p>
 
                 <h3>3. Find the best plan</h3>
-                <p>Click "Find the best plan" to see how long the level-up takes (or your best rate) and what each facility should make.</p>
+                <p>Click "Find the best plan" to see how long the level-up takes (or your best rate) and what each facility should make. Set it up once and leave it running. Everything you enter is saved in your browser; "Clear saved values" resets it.</p>
 
                 <h3>4. Set a goal (optional)</h3>
                 <p>With Most coins, enter a target amount and your current balance to see how long it will take. This updates instantly as you type.</p>
 
                 <h3>Understanding the results</h3>
                 <ul>
-                    <li><strong>Your rate</strong>: the best steady rate your facilities can reach, per second, hour or day. "Proven best plan" means no other use of your facilities earns more, for the game data we have.</li>
+                    <li><strong>Aniimo team</strong>: which Aniimo to keep on your homeland, for the fastest setup (Best) or the least you can get by with (Minimum). Open it for the full list.</li>
+                    <li><strong>Level-up</strong>: how soon you'll have everything the level-up costs, and how fast each cost comes in. The slowest one is in bold. Surplus is what's left over when it's ready, such as extra coins or ore.</li>
+                    <li><strong>Your rate</strong>: coins per second, hour or day. "Proven best plan" means no other plan does better, for the game data we have.</li>
+                    <li><strong>Profit by product</strong>: with Level up, what each product earns per hour and by the time the level-up is ready.</li>
                     <li><strong>What each facility should do</strong>: what to set each facility to, all running at once. Recipes tagged "unverified" haven't been checked in game yet.</li>
-                    <li><strong>Aniimo team</strong>: which Aniimo to keep on your homeland, for the fastest setup (Best) or the least you can get by with (Minimum).</li>
-                    <li><strong>Total time / amount produced</strong>: how long your goal takes, and what gets made along the way.</li>
+                    <li><strong>Set a goal</strong>: with Most coins, how long a target amount takes and what gets made along the way.</li>
                 </ul>
             </div>
         </div>
