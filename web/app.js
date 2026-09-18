@@ -875,52 +875,109 @@ const ENVIRONMENT_FACILITY_COLORS = {
 const ENVIRONMENT_BUILDING_SIZE = 2.0;
 const ENVIRONMENT_COVERAGE_RADIUS = 4.5;
 
-// Renders a simple SVG diagram of one building instance's exact chosen layout (from
-// `assignment.layouts[i]`); literally the solver's own placements, not an invented
-// illustration: a dashed square for the coverage zone, a solid square for the building itself,
-// and one colored rectangle per hosted facility, with a small legend mapping color to facility
-// name (there's no room for full labels at this scale).
-function renderEnvironmentDiagram(layout) {
+// Coverage tint for each growing environment, used to shade a building's coverage area.
+const ENVIRONMENT_MODE_COLORS = {
+    Warm: '#f59e0b',
+    Scorching: '#ef4444',
+    Cool: '#60a5fa',
+    Freeze: '#67e8f9',
+    Adequate: '#facc15',
+};
+
+// Renders one building's layout as an SVG: faint one-tile gridlines, the building, its coverage
+// area shaded in the environment's color, and every plot the plan puts in it, nearest the
+// building first. `rows` are this building's plan rows; each plot is matched to one of them so
+// hovering a plot names its crop, and when one facility type grows more than one crop here (so
+// color alone can't tell them apart) each plot shows its crop's number from the legend.
+// Positions are the solver's own, in game tiles.
+function renderEnvironmentDiagram(layout, mode, building, rows = []) {
     if (!layout || layout.length === 0) return '';
     const margin = 5;
     const half = ENVIRONMENT_COVERAGE_RADIUS + margin;
     const buildingCenter = ENVIRONMENT_BUILDING_SIZE / 2;
-    // Center the viewBox on the building's own center, not world origin (0,0); the building sits
-    // at (0,0)-(size,size), so its center (and the coverage zone centered on it) is offset from
-    // the origin. Centering the viewBox on the origin instead made the whole diagram look
-    // consistently shifted toward one corner.
+    // Centered on the building's own center (it sits at (0,0)-(size,size)), not world origin.
     const viewMin = buildingCenter - half;
     const viewSize = half * 2;
     const coverageMin = buildingCenter - ENVIRONMENT_COVERAGE_RADIUS;
     const coverageSize = ENVIRONMENT_COVERAGE_RADIUS * 2;
+    const tint = ENVIRONMENT_MODE_COLORS[mode] || '#9aa0a8';
 
-    // A small fixed inset shrinks each tile slightly so adjacent, edge-touching placements (a
-    // legitimate, non-overlapping packing) render with a visible gap between them instead of
-    // looking like one contiguous, ambiguous blob; purely cosmetic, doesn't reflect anything about
-    // the actual game geometry.
-    const inset = 0.06;
-    const rects = layout.map(p => {
+    // One-tile gridlines, aligned to whole tiles.
+    const gridLines = [];
+    for (let t = Math.ceil(viewMin); t <= viewMin + viewSize; t++) {
+        gridLines.push(`<line x1="${t}" y1="${viewMin}" x2="${t}" y2="${viewMin + viewSize}" />`);
+        gridLines.push(`<line x1="${viewMin}" y1="${t}" x2="${viewMin + viewSize}" y2="${t}" />`);
+    }
+
+    // Plots nearest the building first, each matched to a plan row of its facility type.
+    const distance = p => Math.hypot(p.x + p.size / 2 - buildingCenter, p.y + p.size / 2 - buildingCenter);
+    const plots = [...layout].sort((a, b) => distance(a) - distance(b));
+    const queue = {};
+    rows.forEach(r => {
+        if (!r.item_name) return;
+        (queue[r.facility] = queue[r.facility] || []).push({ item: r.item_name, left: r.facility_count });
+    });
+    const cropOf = p => {
+        const q = queue[p.facility];
+        while (q && q.length && q[0].left <= 0) q.shift();
+        if (!q || !q.length) return null;
+        q[0].left--;
+        return q[0].item;
+    };
+    const assigned = plots.map(p => ({ ...p, crop: cropOf(p) }));
+    const crops = [...new Set(assigned.map(p => `${p.facility}|${p.crop}`))];
+    const cropsPerFacility = {};
+    crops.forEach(key => {
+        const facility = key.split('|')[0];
+        cropsPerFacility[facility] = (cropsPerFacility[facility] || 0) + 1;
+    });
+    const numbered = Object.values(cropsPerFacility).some(n => n > 1);
+    const numberOf = key => crops.indexOf(key) + 1;
+
+    // A small inset keeps edge-touching plots visibly separate; purely cosmetic.
+    const inset = 0.08;
+    const rects = assigned.map(p => {
         const color = ENVIRONMENT_FACILITY_COLORS[p.facility] || '#888888';
         const size = p.size - inset * 2;
-        return `<rect x="${p.x + inset}" y="${p.y + inset}" width="${size}" height="${size}" fill="${color}" fill-opacity="0.75" stroke="${color}" stroke-width="0.03" />`;
+        const label = p.crop ? `${p.facility}: ${prettyItem(p.crop)}` : p.facility;
+        const initials = numbered && p.crop
+            ? `<text x="${p.x + p.size / 2}" y="${p.y + p.size / 2}" font-size="${Math.min(0.9, p.size * 0.4)}">${numberOf(`${p.facility}|${p.crop}`)}</text>`
+            : '';
+        return `<g class="env-plot"><title>${label}</title>
+            <rect x="${p.x + inset}" y="${p.y + inset}" width="${size}" height="${size}" rx="0.25" fill="${color}" fill-opacity="0.85" stroke="${color}" stroke-width="0.06" />${initials}</g>`;
     }).join('');
 
-    const usedFacilities = [...new Set(layout.map(p => p.facility))];
-    const legend = usedFacilities.map(f => `
+    // Legend: the coverage, then each crop with how many plots it gets here.
+    const counts = {};
+    assigned.forEach(p => {
+        const key = `${p.facility}|${p.crop}`;
+        counts[key] = (counts[key] || 0) + 1;
+    });
+    const legend = [`
         <span class="env-legend-item">
-            <span class="env-legend-swatch" style="background:${ENVIRONMENT_FACILITY_COLORS[f] || '#888888'}"></span>${f}
-        </span>
-    `).join('');
+            <span class="env-legend-swatch coverage" style="background:${tint}33;border-color:${tint}"></span>${mode} coverage
+        </span>`].concat(Object.entries(counts).map(([key, n]) => {
+        const [facility, crop] = key.split('|');
+        const name = crop && crop !== 'null' ? `${facility}: ${prettyItem(crop)}` : facility;
+        return `
+        <span class="env-legend-item">
+            <span class="env-legend-swatch" style="background:${ENVIRONMENT_FACILITY_COLORS[facility] || '#888888'}"></span>${numbered ? `<b>${numberOf(key)}</b> ` : ''}${name} ×${n}
+        </span>`;
+    })).join('');
 
     return `
         <div class="env-diagram">
-            <svg viewBox="${viewMin} ${viewMin} ${viewSize} ${viewSize}" width="200" height="200">
+            <svg viewBox="${viewMin} ${viewMin} ${viewSize} ${viewSize}" role="img" aria-label="${building} layout, ${mode} coverage">
+                <g class="env-grid">${gridLines.join('')}</g>
                 <rect x="${coverageMin}" y="${coverageMin}" width="${coverageSize}" height="${coverageSize}"
-                      fill="none" stroke="currentColor" stroke-opacity="0.4" stroke-dasharray="0.3,0.3" stroke-width="0.06" />
-                <rect x="0" y="0" width="${ENVIRONMENT_BUILDING_SIZE}" height="${ENVIRONMENT_BUILDING_SIZE}" fill="currentColor" fill-opacity="0.6" />
+                      fill="${tint}" fill-opacity="0.12" stroke="${tint}" stroke-opacity="0.8" stroke-dasharray="0.35,0.25" stroke-width="0.08" />
                 ${rects}
+                <g class="env-building"><title>${building} (${mode})</title>
+                    <rect x="0.05" y="0.05" width="${ENVIRONMENT_BUILDING_SIZE - 0.1}" height="${ENVIRONMENT_BUILDING_SIZE - 0.1}" rx="0.3" fill="${tint}" stroke="currentColor" stroke-opacity="0.6" stroke-width="0.08" />
+                </g>
             </svg>
             <div class="env-legend">${legend}</div>
+            <p class="env-note">A plot counts as covered if any part of it is inside the dashed area.</p>
         </div>
     `;
 }
@@ -963,7 +1020,7 @@ function renderFacilityPlan(plan) {
             : units.map((unit, i) => `
                 ${units.length > 1 ? `<p class="hint small">${unit.building} ${i + 1}</p>` : ''}
                 <div class="env-unit">
-                    ${renderEnvironmentDiagram(unit.layout)}
+                    ${renderEnvironmentDiagram(unit.layout, mode, unit.building, unit.rows)}
                     <div class="env-unit-table">${facilityPlanTable(unit.rows)}</div>
                 </div>
             `).join('');

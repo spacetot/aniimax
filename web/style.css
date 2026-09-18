@@ -790,16 +790,41 @@ tbody tr:first-child td {
 
 .env-diagram svg {
     display: block;
+    width: 280px;
+    max-width: 100%;
+    height: auto;
+    aspect-ratio: 1;
+    background: var(--surface-2);
     border: 1px solid var(--border);
-    border-radius: 4px;
+    border-radius: 10px;
+}
+
+.env-grid line {
+    stroke: currentColor;
+    stroke-opacity: 0.18;
+    stroke-width: 0.03;
+}
+
+.env-plot text {
+    fill: #111;
+    font-family: var(--font-body);
+    font-weight: 700;
+    text-anchor: middle;
+    dominant-baseline: central;
+    pointer-events: none;
+}
+
+.env-plot:hover rect {
+    fill-opacity: 1;
+    stroke: currentColor;
 }
 
 .env-legend {
     display: flex;
-    flex-wrap: wrap;
-    gap: 0.5rem;
-    margin-top: 0.4rem;
-    max-width: 150px;
+    flex-direction: column;
+    gap: 0.3rem;
+    margin-top: 0.5rem;
+    max-width: 280px;
     font-size: 0.7rem;
     color: var(--text-muted);
 }
@@ -812,9 +837,20 @@ tbody tr:first-child td {
 
 .env-legend-swatch {
     display: inline-block;
-    width: 0.6rem;
-    height: 0.6rem;
-    border-radius: 2px;
+    width: 0.7rem;
+    height: 0.7rem;
+    border-radius: 3px;
+}
+
+.env-legend-swatch.coverage {
+    border: 1px dashed;
+}
+
+.env-note {
+    max-width: 280px;
+    margin: 0.4rem 0 0;
+    font-size: 0.7rem;
+    color: var(--text-muted);
 }
 
 /* Recipe reference tables (facility recipe modal): one table per facility, listed row order

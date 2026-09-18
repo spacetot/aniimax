@@ -912,9 +912,21 @@ pub fn to_production_plan(
         .map(|env| {
             let mut layouts: Vec<Vec<FacilityPlacement>> = Vec::new();
             let mut covered: Vec<(String, u32)> = Vec::new();
+            // Plots closest to the building first, so a building covering fewer plots than its
+            // layout holds shows a compact cluster rather than whichever plots came first. Any
+            // subset of a non-overlapping layout is still one.
+            let center = crate::coverage::BUILDING_SIZE / 2.0;
+            let mut nearest_first = env.option.layout.clone();
+            nearest_first.sort_by(|a, b| {
+                let distance = |p: &crate::coverage::Placement| {
+                    let (dx, dy) = (p.x + p.size / 2.0 - center, p.y + p.size / 2.0 - center);
+                    dx * dx + dy * dy
+                };
+                distance(a).partial_cmp(&distance(b)).unwrap_or(std::cmp::Ordering::Equal)
+            });
             for _ in 0..env.count {
                 let mut layout = Vec::new();
-                for placement in &env.option.layout {
+                for placement in &nearest_first {
                     let need = still_needed.entry((placement.facility.clone(), env.mode.clone())).or_default();
                     if *need == 0 {
                         continue;
