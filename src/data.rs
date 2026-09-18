@@ -76,7 +76,7 @@ struct UnverifiedRow {
     facility: String,
 }
 
-/// Parses the contents of `unverified.csv` (columns `name, facility, source`): every recipe whose
+/// Parses the contents of `unverified.csv` (columns `name, facility`): every recipe whose
 /// numbers haven't been checked in game yet, as `(recipe, facility)` pairs. A recipe comes off the
 /// list once someone confirms it in game.
 pub fn parse_unverified(csv_text: &str) -> Result<Vec<(String, String)>, Box<dyn Error>> {

@@ -16,8 +16,8 @@
 // (see `simpleSetup`). Farmland, Woodland and Mine counts come from the game; every other facility
 // is placed once, confirmed up to RV level 6.
 //
-// Facilities marked "Not yet verified in game" in their tooltip use numbers from another community
-// tool (hideoutgacha.com) until someone confirms them in game.
+// Facilities marked "Not yet verified in game" in their tooltip haven't had their numbers
+// confirmed in game yet.
 export const FACILITIES = [
     {
         name: 'Farmland', slug: 'farmland', defaultCount: 1, category: 'Materials',

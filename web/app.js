@@ -441,7 +441,7 @@ function renderSimpleSummary() {
         ? ` Building counts are only confirmed up to RV level ${COUNTS_CONFIRMED_UP_TO}; above that they're estimates, so check them in advanced mode.`
         : '';
     const levels = homeLevel > COUNTS_CONFIRMED_UP_TO
-        ? ` Facility levels past RV level ${COUNTS_CONFIRMED_UP_TO} come from Hideout Guides' data and haven't been checked in game yet.`
+        ? ` Facility levels past RV level ${COUNTS_CONFIRMED_UP_TO} haven't been checked in game yet.`
         : '';
     const moduleText = `Ecological Module Lv.${modules.ecological_module}, Kitchen Module Lv.${modules.kitchen_module}, `
         + `Resource Detector Lv.${modules.resource_detector}, Crafting Module Lv.${modules.crafting_module}`;
@@ -1029,8 +1029,8 @@ function displayPlan(plan, scroll = true) {
     const unverified = plan.unverified || [];
     if (unverified.length) {
         const list = unverified.map(u => `${u.item_name} (${u.facility})`).join(', ');
-        unverifiedEl.textContent = `This plan uses ${unverified.length} recipe${unverified.length === 1 ? '' : 's'} not yet checked in game, `
-            + `taken from Hideout Guides' data: ${list}. If any of those numbers are off, so is this plan.`;
+        unverifiedEl.textContent = `This plan uses ${unverified.length} recipe${unverified.length === 1 ? '' : 's'} not yet checked in game: `
+            + `${list}. If any of those numbers are off, so is this plan.`;
         unverifiedEl.style.display = 'block';
     } else {
         unverifiedEl.style.display = 'none';
@@ -1233,7 +1233,7 @@ function renderRecipeTables(recipes) {
         const tables = facilitiesInCategory.map(f => {
             const rows = byFacility.get(f.name).map(r => `
                 <tr${r.verified === false ? ' class="unverified"' : ''}>
-                    <td>${r.name}${r.verified === false ? ' <span class="info-icon" data-tooltip="Not yet checked in game; numbers from Hideout Guides.">?</span>' : ''}</td>
+                    <td>${r.name}${r.verified === false ? ' <span class="info-icon" data-tooltip="Not yet checked in game.">?</span>' : ''}</td>
                     <td>${r.facility_level}</td>
                     <td>${formatRecipeInputs(r)}</td>
                     <td>${formatRecipeYield(r)}</td>

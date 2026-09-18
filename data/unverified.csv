@@ -1,70 +1,70 @@
-name, facility, source
-bamboo_joss_stick, Phonolfactory Table, Hideout Guides
-rose_incense, Phonolfactory Table, Hideout Guides
-cherry_incense, Phonolfactory Table, Hideout Guides
-lavender_incense, Phonolfactory Table, Hideout Guides
-lemon_incense, Phonolfactory Table, Hideout Guides
-advanced_lemon_incense, Phonolfactory Table, Hideout Guides
-herbal_ginseng_aroma, Phonolfactory Table, Hideout Guides
-soap, Phonolfactory Table, Hideout Guides
-premium_soap, Phonolfactory Table, Hideout Guides
-orange_flower_incense, Phonolfactory Table, Hideout Guides
-mixed_perfume, Phonolfactory Table, Hideout Guides
-lotion, Phonolfactory Table, Hideout Guides
-premium_mixed_perfume, Phonolfactory Table, Hideout Guides
-wheat_tea, Bouncy Brew Keg, Hideout Guides
-toasted_rice_green_tea, Bouncy Brew Keg, Hideout Guides
-potato_kvass, Bouncy Brew Keg, Hideout Guides
-strawberry_juice, Bouncy Brew Keg, Hideout Guides
-apple_juice, Bouncy Brew Keg, Hideout Guides
-sugarcane_juice, Bouncy Brew Keg, Hideout Guides
-grape_juice, Bouncy Brew Keg, Hideout Guides
-ginseng_water, Bouncy Brew Keg, Hideout Guides
-grape_lemon_drink, Bouncy Brew Keg, Hideout Guides
-walnut_milk, Bouncy Brew Keg, Hideout Guides
-cranberry_juice, Bouncy Brew Keg, Hideout Guides
-coconut_cooler, Bouncy Brew Keg, Hideout Guides
-agave_drink, Bouncy Brew Keg, Hideout Guides
-hot_cocoa, Bouncy Brew Keg, Hideout Guides
-coconut_cocoa, Bouncy Brew Keg, Hideout Guides
-orange_flower_dew, Bouncy Brew Keg, Hideout Guides
-soy_sauce_fried_rice, Blazing Stove, Hideout Guides
-creamy_potato_soup, Blazing Stove, Hideout Guides
-cherry_blossom_rice_ball, Blazing Stove, Hideout Guides
-premium_potato_soup, Blazing Stove, Hideout Guides
-tanghulu, Blazing Stove, Hideout Guides
-soy_sauce_tofu, Blazing Stove, Hideout Guides
-sugar_roasted_chestnuts, Blazing Stove, Hideout Guides
-steamed_vermicelli_roll, Blazing Stove, Hideout Guides
-ginseng_chestnut_cake, Blazing Stove, Hideout Guides
-walnut_cake, Blazing Stove, Hideout Guides
-jello, Blazing Stove, Hideout Guides
-strawberry_candy, Blazing Stove, Hideout Guides
-rich_grape_compote, Blazing Stove, Hideout Guides
-premium_jello, Blazing Stove, Hideout Guides
-strawberry_cream_puff, Blazing Stove, Hideout Guides
-cranberry_chocolate, Blazing Stove, Hideout Guides
-soy_sauce, Pickling Jar, Hideout Guides
-salted_cherry_blossom, Pickling Jar, Hideout Guides
-sweet_rice_drink, Pickling Jar, Hideout Guides
-cider_vinegar, Pickling Jar, Hideout Guides
-premium_sweet_rice_wine, Pickling Jar, Hideout Guides
-rice_vinegar, Pickling Jar, Hideout Guides
-salted_lemon, Pickling Jar, Hideout Guides
-premium_salted_lemon, Pickling Jar, Hideout Guides
-candied_strawberries, Pickling Jar, Hideout Guides
-candied_orange_flower, Pickling Jar, Hideout Guides
-cotton_thread, Joy Wheel Loom, Hideout Guides
-woolen_yarn, Joy Wheel Loom, Hideout Guides
-cotton_fabric, Joy Wheel Loom, Hideout Guides
-palm_rope, Joy Wheel Loom, Hideout Guides
-wool_fabric, Joy Wheel Loom, Hideout Guides
-dyed_cotton_fabric, Joy Wheel Loom, Hideout Guides
-aromathyst, Dewy House, Hideout Guides
-quick_aromathyst, Dewy House, Hideout Guides
-wool, Nimbus Bed, Hideout Guides
-quick_wool, Nimbus Bed, Hideout Guides
-petals, Nimbus Bed, Hideout Guides
-star, Starfall Hammock, Hideout Guides
-scales, Floral Windmill, Hideout Guides
-quick_scales, Floral Windmill, Hideout Guides
+name, facility
+bamboo_joss_stick, Phonolfactory Table
+rose_incense, Phonolfactory Table
+cherry_incense, Phonolfactory Table
+lavender_incense, Phonolfactory Table
+lemon_incense, Phonolfactory Table
+advanced_lemon_incense, Phonolfactory Table
+herbal_ginseng_aroma, Phonolfactory Table
+soap, Phonolfactory Table
+premium_soap, Phonolfactory Table
+orange_flower_incense, Phonolfactory Table
+mixed_perfume, Phonolfactory Table
+lotion, Phonolfactory Table
+premium_mixed_perfume, Phonolfactory Table
+wheat_tea, Bouncy Brew Keg
+toasted_rice_green_tea, Bouncy Brew Keg
+potato_kvass, Bouncy Brew Keg
+strawberry_juice, Bouncy Brew Keg
+apple_juice, Bouncy Brew Keg
+sugarcane_juice, Bouncy Brew Keg
+grape_juice, Bouncy Brew Keg
+ginseng_water, Bouncy Brew Keg
+grape_lemon_drink, Bouncy Brew Keg
+walnut_milk, Bouncy Brew Keg
+cranberry_juice, Bouncy Brew Keg
+coconut_cooler, Bouncy Brew Keg
+agave_drink, Bouncy Brew Keg
+hot_cocoa, Bouncy Brew Keg
+coconut_cocoa, Bouncy Brew Keg
+orange_flower_dew, Bouncy Brew Keg
+soy_sauce_fried_rice, Blazing Stove
+creamy_potato_soup, Blazing Stove
+cherry_blossom_rice_ball, Blazing Stove
+premium_potato_soup, Blazing Stove
+tanghulu, Blazing Stove
+soy_sauce_tofu, Blazing Stove
+sugar_roasted_chestnuts, Blazing Stove
+steamed_vermicelli_roll, Blazing Stove
+ginseng_chestnut_cake, Blazing Stove
+walnut_cake, Blazing Stove
+jello, Blazing Stove
+strawberry_candy, Blazing Stove
+rich_grape_compote, Blazing Stove
+premium_jello, Blazing Stove
+strawberry_cream_puff, Blazing Stove
+cranberry_chocolate, Blazing Stove
+soy_sauce, Pickling Jar
+salted_cherry_blossom, Pickling Jar
+sweet_rice_drink, Pickling Jar
+cider_vinegar, Pickling Jar
+premium_sweet_rice_wine, Pickling Jar
+rice_vinegar, Pickling Jar
+salted_lemon, Pickling Jar
+premium_salted_lemon, Pickling Jar
+candied_strawberries, Pickling Jar
+candied_orange_flower, Pickling Jar
+cotton_thread, Joy Wheel Loom
+woolen_yarn, Joy Wheel Loom
+cotton_fabric, Joy Wheel Loom
+palm_rope, Joy Wheel Loom
+wool_fabric, Joy Wheel Loom
+dyed_cotton_fabric, Joy Wheel Loom
+aromathyst, Dewy House
+quick_aromathyst, Dewy House
+wool, Nimbus Bed
+quick_wool, Nimbus Bed
+petals, Nimbus Bed
+star, Starfall Hammock
+scales, Floral Windmill
+quick_scales, Floral Windmill

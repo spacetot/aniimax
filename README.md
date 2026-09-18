@@ -617,7 +617,7 @@ Production data is stored in CSV files in the `data/` directory:
 - `pickling_jar.csv` - Sauces, vinegars and candied fruit
 - `joy_wheel_loom.csv` - Thread, yarn and fabric
 
-Farmland, Woodland, Mine, Well, Tidewhisper Sandcastle, Carousel Mill, Crafting Table, Claw Game Cooker, Jukebox Dryer and Simmering Pot are verified in game. The other nine facilities start from the data published by [Hideout Guides' Homeland Optimizer](https://www.hideoutgacha.com/games/aniimo/homeland-optimizer) and are being checked in game as they unlock.
+Farmland, Woodland, Mine, Well, Tidewhisper Sandcastle, Carousel Mill, Crafting Table, Claw Game Cooker, Jukebox Dryer and Simmering Pot are verified in game. The other nine facilities' recipes haven't been checked in game yet: `data/unverified.csv` lists them, the recipe list marks each one, and a plan lists any it relies on.
 
 ### Adding New Items
 
