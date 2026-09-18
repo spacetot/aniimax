@@ -2498,7 +2498,9 @@ fn build_grower_assignment(
     }
 
     let mut grower_assignment: HashMap<(String, String, String), u32> = HashMap::new();
-    for (&facility, shares) in &grower_shares {
+    for (&facility, shares) in &mut grower_shares {
+        // Sorted so rounding ties go the same way every run, not by `HashMap` order.
+        shares.sort_by(|a, b| (a.0, a.1).cmp(&(b.0, b.1)));
         let fractions: Vec<f64> = shares.iter().map(|(_, _, f)| *f).collect();
         let counts = apportion_counts(&fractions, facility_counts.get_count(facility), false);
         for (&(chain_name, item_name, _), &count) in shares.iter().zip(&counts) {
@@ -2650,7 +2652,9 @@ fn build_environment_assignment(
     }
 
     let mut environment_assignment: HashMap<(String, String, String), u32> = HashMap::new();
-    for (&(facility_type, env), shares) in &pool_shares {
+    for (&(facility_type, env), shares) in &mut pool_shares {
+        // Sorted so rounding ties go the same way every run, not by `HashMap` order.
+        shares.sort_by(|a, b| (a.0, a.1).cmp(&(b.0, b.1)));
         let fractions: Vec<f64> = shares.iter().map(|(_, _, f)| *f).collect();
         let total = coverage[&(facility_type, env)];
         let demand_sum: f64 = fractions.iter().sum();
@@ -2909,7 +2913,11 @@ fn solve_environment_and_facility_allocation(
                 }
                 let mut sorted: Vec<(&str, usize, f64)> =
                     hops_per_chain.into_iter().map(|(name, (hops, rate))| (name, hops, rate)).collect();
-                sorted.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
+                // Name breaks ties so equal-rate chains don't fall back on `HashMap` order, which
+                // Rust randomizes per run and would make the same input give different plans.
+                sorted.sort_by(|a, b| {
+                    b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal).then_with(|| a.0.cmp(b.0))
+                });
                 let mut remaining = owned;
                 for (chain_name, hops, _rate) in sorted {
                     if hops <= remaining {
@@ -3844,7 +3852,7 @@ pub fn find_production_plan_with_progress(
                         eff_by_name.get(chain_name.as_str()).map(|&eff| (item_name.as_str(), eff, count))
                     })
                     .collect();
-                assigned.sort_by_key(|a| std::cmp::Reverse(a.2));
+                assigned.sort_by(|a, b| b.2.cmp(&a.2).then_with(|| a.0.cmp(b.0)));
 
                 if assigned.is_empty() {
                     return vec![PlanStep {
@@ -3915,7 +3923,9 @@ pub fn find_production_plan_with_progress(
             // resolves to whole-unit dedication, never a time-share percentage.
             let mut contributors: Vec<(&ProductionEfficiency, &str, f64, f64)> =
                 facility_usage.get(name).cloned().unwrap_or_default();
-            contributors.sort_by(|a, b| b.3.partial_cmp(&a.3).unwrap_or(std::cmp::Ordering::Equal));
+            contributors.sort_by(|a, b| {
+                b.3.partial_cmp(&a.3).unwrap_or(std::cmp::Ordering::Equal).then_with(|| a.1.cmp(b.1))
+            });
 
             if contributors.is_empty() {
                 return vec![PlanStep {
