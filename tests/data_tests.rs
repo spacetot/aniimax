@@ -280,3 +280,18 @@ fn test_grower_steps_cover_every_crop_and_tree() {
         assert_eq!(cols[1], item.facility, "{} is grown at {}, not {}", cols[0], item.facility, cols[1]);
     }
 }
+
+// Every recipe listed as not yet checked in game exists, at the facility the list says.
+#[test]
+fn test_unverified_list_names_real_recipes() {
+    let Some(items) = load_items() else { return };
+    let listed = aniimax::data::load_unverified(Path::new("data")).expect("Failed to load unverified.csv");
+    assert!(!listed.is_empty());
+    for (name, facility) in &listed {
+        let item = items
+            .iter()
+            .find(|i| &i.name == name && &i.facility == facility)
+            .unwrap_or_else(|| panic!("unverified.csv lists {name} at {facility}, which isn't in the data"));
+        assert_eq!(&item.facility, facility);
+    }
+}

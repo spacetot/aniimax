@@ -748,6 +748,18 @@ pub struct JsAniimoTask {
     pub busy: f64,
 }
 
+/// Recipes not yet checked in game, embedded in the web build; see `data/unverified.csv`.
+fn embedded_unverified() -> Vec<(String, String)> {
+    crate::data::parse_unverified(include_str!("../data/unverified.csv")).expect("embedded unverified.csv is valid")
+}
+
+/// A recipe a plan relies on that hasn't been checked in game yet.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JsUnverified {
+    pub facility: String,
+    pub item_name: String,
+}
+
 /// The Farmland/Woodland Aniimo jobs embedded in the web build; see `data/grower_steps.csv`.
 fn embedded_grower_steps() -> crate::models::GrowerSteps {
     crate::data::parse_grower_steps(include_str!("../data/grower_steps.csv"))
@@ -1032,6 +1044,10 @@ pub struct JsProductionPlan {
     /// Set when the exact planner made this plan: the most any plan could earn.
     #[serde(default)]
     pub upper_bound: Option<f64>,
+    /// Recipes this plan produces that haven't been checked in game yet (see
+    /// `data/unverified.csv`), so the page can say what its numbers rest on.
+    #[serde(default)]
+    pub unverified: Vec<JsUnverified>,
 }
 
 fn empty_production_plan(success: bool, error: Option<String>) -> JsProductionPlan {
@@ -1048,6 +1064,7 @@ fn empty_production_plan(success: bool, error: Option<String>) -> JsProductionPl
         trial_solves: 0,
         proven_optimal: None,
         upper_bound: None,
+        unverified: vec![],
     }
 }
 
@@ -1253,6 +1270,21 @@ impl PreparedInput {
     /// The result the web page shows for `plan`, with each row's Aniimo; `proof` is the exact
     /// planner's `(proven optimal, upper bound)`, if it made the plan.
     fn to_js(&self, plan: crate::models::ProductionPlan, proof: Option<(bool, f64)>) -> JsProductionPlan {
+        let listed = embedded_unverified();
+        let mut unverified: Vec<JsUnverified> = plan
+            .coin_items
+            .iter()
+            .filter(|step| step.status == crate::models::PlanStepStatus::Producing)
+            .filter_map(|step| {
+                let item = step.item_name.as_ref()?;
+                listed
+                    .iter()
+                    .any(|(name, facility)| name == item && *facility == step.facility)
+                    .then(|| JsUnverified { facility: step.facility.clone(), item_name: item.clone() })
+            })
+            .collect();
+        unverified.sort_by(|a, b| (&a.facility, &a.item_name).cmp(&(&b.facility, &b.item_name)));
+        unverified.dedup_by(|a, b| a.facility == b.facility && a.item_name == b.item_name);
         let coin_items = plan
             .coin_items
             .into_iter()
@@ -1290,6 +1322,7 @@ impl PreparedInput {
             trial_solves: plan.trial_solves,
             proven_optimal: proof.map(|(proven, _)| proven),
             upper_bound: proof.map(|(_, bound)| bound),
+            unverified,
         }
     }
 }
@@ -1469,6 +1502,9 @@ struct RecipeInfo {
     /// The Aniimo ability this recipe uses and the lowest ability level that can run it; `None`
     /// for crops and trees.
     aniimo: Option<(String, u32)>,
+    /// `false` if the recipe's numbers haven't been checked in game yet (see
+    /// `data/unverified.csv`).
+    verified: bool,
 }
 
 /// Get the full recipe list for every item in the game data, grouped by nothing in particular
@@ -1477,6 +1513,7 @@ struct RecipeInfo {
 pub fn get_all_items() -> String {
     let items = get_embedded_items();
     let requirements = embedded_aniimo_requirements();
+    let unverified = embedded_unverified();
     let recipes: Vec<RecipeInfo> = items
         .iter()
         .map(|item| RecipeInfo {
@@ -1494,6 +1531,7 @@ pub fn get_all_items() -> String {
             module_requirement: item.module_requirement.clone(),
             byproduct: item.byproduct.clone(),
             aniimo: requirements.get(&item.name).map(|(ability, level)| (ability.to_string(), level)),
+            verified: !unverified.iter().any(|(name, facility)| *name == item.name && *facility == item.facility),
         })
         .collect();
 

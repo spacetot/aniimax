@@ -440,10 +440,13 @@ function renderSimpleSummary() {
     const estimate = homeLevel > COUNTS_CONFIRMED_UP_TO
         ? ` Building counts are only confirmed up to RV level ${COUNTS_CONFIRMED_UP_TO}; above that they're estimates, so check them in advanced mode.`
         : '';
+    const levels = homeLevel > COUNTS_CONFIRMED_UP_TO
+        ? ` Facility levels past RV level ${COUNTS_CONFIRMED_UP_TO} come from Hideout Guides' data and haven't been checked in game yet.`
+        : '';
     const moduleText = `Ecological Module Lv.${modules.ecological_module}, Kitchen Module Lv.${modules.kitchen_module}, `
         + `Resource Detector Lv.${modules.resource_detector}, Crafting Module Lv.${modules.crafting_module}`;
     document.getElementById('simple-summary').textContent =
-        `Assumes: ${built.join(', ')}. Modules: ${moduleText}.${estimate}`;
+        `Assumes: ${built.join(', ')}. Modules: ${moduleText}.${estimate}${levels}`;
 }
 
 function applyConfigMode() {
@@ -1013,13 +1016,24 @@ function displayPlan(plan, scroll = true) {
 
     const explored = document.getElementById('plan-explored-hint');
     if (plan.proven_optimal === true) {
-        explored.textContent = 'Proven best plan: no other use of these facilities earns more.';
+        explored.textContent = 'Proven best plan for the game data we have: no other use of these facilities earns more.';
     } else if (plan.proven_optimal === false && plan.upper_bound > 0) {
         const gap = Math.max(0, (plan.upper_bound - plan.rate_per_second) / plan.upper_bound * 100);
         explored.textContent = `Best plan found in the time allowed; the best possible is at most ${gap.toFixed(1)}% higher.`;
     } else {
         explored.textContent =
             `Explored ${plan.candidates_evaluated} candidate item${plan.candidates_evaluated === 1 ? '' : 's'} across ${plan.trial_solves} trial solve${plan.trial_solves === 1 ? '' : 's'} to find this plan.`;
+    }
+
+    const unverifiedEl = document.getElementById('plan-unverified');
+    const unverified = plan.unverified || [];
+    if (unverified.length) {
+        const list = unverified.map(u => `${u.item_name} (${u.facility})`).join(', ');
+        unverifiedEl.textContent = `This plan uses ${unverified.length} recipe${unverified.length === 1 ? '' : 's'} not yet checked in game, `
+            + `taken from Hideout Guides' data: ${list}. If any of those numbers are off, so is this plan.`;
+        unverifiedEl.style.display = 'block';
+    } else {
+        unverifiedEl.style.display = 'none';
     }
 
     renderFacilityPlan(plan);
@@ -1218,8 +1232,8 @@ function renderRecipeTables(recipes) {
 
         const tables = facilitiesInCategory.map(f => {
             const rows = byFacility.get(f.name).map(r => `
-                <tr>
-                    <td>${r.name}</td>
+                <tr${r.verified === false ? ' class="unverified"' : ''}>
+                    <td>${r.name}${r.verified === false ? ' <span class="info-icon" data-tooltip="Not yet checked in game; numbers from Hideout Guides.">?</span>' : ''}</td>
                     <td>${r.facility_level}</td>
                     <td>${formatRecipeInputs(r)}</td>
                     <td>${formatRecipeYield(r)}</td>

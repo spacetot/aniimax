@@ -69,6 +69,31 @@ pub fn load_grower_steps(data_dir: &Path) -> Result<GrowerSteps, Box<dyn Error>>
     parse_grower_steps(&std::fs::read_to_string(data_dir.join("grower_steps.csv"))?)
 }
 
+/// One row of `unverified.csv`.
+#[derive(Debug, serde::Deserialize)]
+struct UnverifiedRow {
+    name: String,
+    facility: String,
+}
+
+/// Parses the contents of `unverified.csv` (columns `name, facility, source`): every recipe whose
+/// numbers haven't been checked in game yet, as `(recipe, facility)` pairs. A recipe comes off the
+/// list once someone confirms it in game.
+pub fn parse_unverified(csv_text: &str) -> Result<Vec<(String, String)>, Box<dyn Error>> {
+    let mut rdr = ReaderBuilder::new().trim(csv::Trim::All).from_reader(csv_text.as_bytes());
+    let mut rows = Vec::new();
+    for row in rdr.deserialize::<UnverifiedRow>() {
+        let row = row?;
+        rows.push((row.name, row.facility));
+    }
+    Ok(rows)
+}
+
+/// Loads `unverified.csv` from the data directory; see [`parse_unverified`].
+pub fn load_unverified(data_dir: &Path) -> Result<Vec<(String, String)>, Box<dyn Error>> {
+    parse_unverified(&std::fs::read_to_string(data_dir.join("unverified.csv"))?)
+}
+
 /// Parses a module requirement string (e.g., "ecological_module:1") into a tuple.
 ///
 /// Returns `None` if the string is empty or invalid.
