@@ -2438,18 +2438,27 @@ fn is_grower_facility(items: &[ProductionItem], name: &str) -> bool {
     !items.iter().any(|it| it.facility == name && it.raw_materials.is_some())
 }
 
-/// Apportions every grower facility's continuous LP shares into authoritative whole-unit counts
-/// (see `apportion_counts`), one facility at a time. Keyed by owned `String` triples `(facility,
-/// chain name, item name)` rather than borrowing from `allocation`/`eff_by_name`, since this needs
-/// to be called against a *trial* candidate set that may get discarded (see
-/// `find_production_plan`'s stranded-chain exclusion loop) as well as the final settled one.
+/// Whole units of every gatherer after rounding the continuous solve (see
+/// `build_grower_assignment`).
+struct GrowerAssignment {
+    /// Whole units growing or mining each item, keyed by `(facility, item)`.
+    units: std::collections::BTreeMap<(String, String), u32>,
+    /// Units' worth of each item each chain can draw on, keyed by `(facility, chain, item)`: its
+    /// continuous demand, scaled down when the item's whole units can't cover every chain using it.
+    by_chain: HashMap<(String, String, String), f64>,
+}
+
+/// Apportions every grower facility's continuous LP shares into whole units (see
+/// `apportion_counts`), one facility at a time. A unit grows or mines one item, and any chain can
+/// use any unit's harvest of that item, so shares are pooled by item first: two chains each wanting
+/// half a Well's water share one Well rather than rounding each half separately (which would hand
+/// the Well to one of them and strand the other). Keyed by owned `String`s rather than borrowing
+/// from `allocation`/`eff_by_name`, since this is called against *trial* candidate sets that may
+/// get discarded (see `find_production_plan`'s exclusion loops) as well as the final settled one.
 ///
-/// The key includes the specific ITEM alongside the chain because one chain can draw several
-/// distinct items from the same facility (e.g. caramel_nut_chips needs walnut, chestnut, AND
-/// maple_syrup, all grown on Woodland); each is its own share of the facility's plots, competing
-/// fairly via the same `apportion_counts` call as any other two chains sharing one facility. A
-/// chain that hosts only one item at a facility (the common case) just gets one share, same as
-/// before.
+/// One chain can draw several distinct items from the same facility (e.g. caramel_nut_chips needs
+/// walnut, chestnut, AND maple_syrup, all grown on Woodland); each item is its own share of the
+/// facility's units.
 ///
 /// `environment_assignment` (see `build_environment_assignment`, which must be computed BEFORE
 /// this) caps each environment-gated item's demand on the grower pool at what it can actually use
@@ -2466,7 +2475,7 @@ fn build_grower_assignment(
     eff_by_name: &HashMap<&str, &ProductionEfficiency>,
     facility_counts: &FacilityCounts,
     environment_assignment: &HashMap<(String, String, String), u32>,
-) -> HashMap<(String, String, String), u32> {
+) -> GrowerAssignment {
     let mut grower_shares: HashMap<&str, Vec<(&str, &str, f64)>> = HashMap::new();
     for (&name, &rate) in allocation {
         let eff = eff_by_name[name];
@@ -2491,17 +2500,34 @@ fn build_grower_assignment(
         }
     }
 
-    let mut grower_assignment: HashMap<(String, String, String), u32> = HashMap::new();
-    for (&facility, shares) in &mut grower_shares {
-        // Sorted so rounding ties go the same way every run, not by `HashMap` order.
-        shares.sort_by(|a, b| (a.0, a.1).cmp(&(b.0, b.1)));
-        let fractions: Vec<f64> = shares.iter().map(|(_, _, f)| *f).collect();
-        let counts = apportion_counts(&fractions, facility_counts.get_count(facility), false);
-        for (&(chain_name, item_name, _), &count) in shares.iter().zip(&counts) {
-            grower_assignment.insert((facility.to_string(), chain_name.to_string(), item_name.to_string()), count);
+    let mut assignment = GrowerAssignment { units: std::collections::BTreeMap::new(), by_chain: HashMap::new() };
+    for (&facility, shares) in &grower_shares {
+        // Per-item totals, sorted so rounding ties go the same way every run, not by `HashMap`
+        // order.
+        let mut item_shares: std::collections::BTreeMap<&str, f64> = std::collections::BTreeMap::new();
+        for &(_, item_name, fraction) in shares {
+            *item_shares.entry(item_name).or_default() += fraction;
+        }
+        let fractions: Vec<f64> = item_shares.values().copied().collect();
+        let capacity = facility_counts.get_count(facility);
+        let counts = apportion_counts(&fractions, capacity, false);
+        let mut item_units: HashMap<&str, (u32, f64)> = HashMap::new();
+        for ((&item_name, &fraction), &count) in item_shares.iter().zip(&counts) {
+            item_units.insert(item_name, (count, fraction * capacity as f64));
+            if count > 0 {
+                assignment.units.insert((facility.to_string(), item_name.to_string()), count);
+            }
+        }
+        for &(chain_name, item_name, fraction) in shares {
+            let (count, demand) = item_units[item_name];
+            let wanted = fraction * capacity as f64;
+            let scale = if demand > 0.0 { (count as f64 / demand).min(1.0) } else { 0.0 };
+            assignment
+                .by_chain
+                .insert((facility.to_string(), chain_name.to_string(), item_name.to_string()), wanted * scale);
         }
     }
-    grower_assignment
+    assignment
 }
 
 /// Caps an item's continuous LP rate by what its grower facilities can ACTUALLY supply once
@@ -2520,7 +2546,7 @@ fn final_rate_for(
     item_map: &HashMap<&str, &ProductionItem>,
     eff: &ProductionEfficiency,
     continuous_rate: f64,
-    grower_assignment: &HashMap<(String, String, String), u32>,
+    grower_assignment: &GrowerAssignment,
     environment_assignment: &HashMap<(String, String, String), u32>,
 ) -> f64 {
     eff.facility_demand
@@ -2536,10 +2562,11 @@ fn final_rate_for(
             // same or different facilities (e.g. caramel_nut_chips needs walnut, chestnut, AND
             // maple_syrup; if any one of those is short, the whole chain is bottlenecked by it).
             let assigned = grower_assignment
+                .by_chain
                 .get(&(facility.clone(), eff.item.name.clone(), item_name.clone()))
                 .copied()
-                .unwrap_or(0);
-            let mut bound = bound.min(assigned as f64 / utilization);
+                .unwrap_or(0.0);
+            let mut bound = bound.min(assigned / utilization);
 
             // Every grower facility whose hosted crop needs an environment is capacity-gated now
             // (see `crate::coverage`); so this simplifies to just checking the crop itself.
@@ -2566,7 +2593,7 @@ fn total_final_value(
     item_map: &HashMap<&str, &ProductionItem>,
     allocation: &HashMap<&str, f64>,
     eff_by_name: &HashMap<&str, &ProductionEfficiency>,
-    grower_assignment: &HashMap<(String, String, String), u32>,
+    grower_assignment: &GrowerAssignment,
     environment_assignment: &HashMap<(String, String, String), u32>,
 ) -> f64 {
     allocation
@@ -2702,22 +2729,18 @@ fn dedicated_processor_units(
 }
 
 /// Whole units of each gatherer (Farmland, Mine, Well, ...) growing or mining each item, keyed by
-/// `(facility, item)`: every chain's share from `grower_assignment` pooled, since any chain can use
-/// any unit's harvest of the same item. An environment-gated item keeps no more units than it has
-/// coverage for. Units the rounding left idle grow the facility's most valuable item to sell
+/// `(facility, item)`, from `grower_assignment`. An environment-gated item keeps no more units than
+/// it has coverage for. Units the rounding left idle grow the facility's most valuable item to sell
 /// directly, if it has one that needs no environment.
 fn pool_grower_units(
     items: &[ProductionItem],
     effs: &[ProductionEfficiency],
     facility_counts: &FacilityCounts,
     item_map: &HashMap<&str, &ProductionItem>,
-    grower_assignment: &HashMap<(String, String, String), u32>,
+    grower_assignment: &GrowerAssignment,
     environment_assignment: &HashMap<(String, String, String), u32>,
 ) -> std::collections::BTreeMap<(String, String), u32> {
-    let mut units: std::collections::BTreeMap<(String, String), u32> = std::collections::BTreeMap::new();
-    for ((facility, _, item_name), &count) in grower_assignment {
-        *units.entry((facility.clone(), item_name.clone())).or_default() += count;
-    }
+    let mut units = grower_assignment.units.clone();
     let mut covered: HashMap<(&str, &str), u32> = HashMap::new();
     for ((facility, _, item_name), &count) in environment_assignment {
         *covered.entry((facility.as_str(), item_name.as_str())).or_default() += count;
@@ -2951,7 +2974,7 @@ fn build_processor_usage<'a>(
     allocation: &HashMap<&'a str, f64>,
     eff_by_name: &HashMap<&'a str, &'a ProductionEfficiency>,
     facility_counts: &FacilityCounts,
-    grower_assignment: &HashMap<(String, String, String), u32>,
+    grower_assignment: &GrowerAssignment,
     environment_assignment: &HashMap<(String, String, String), u32>,
 ) -> HashMap<&'a str, Vec<(&'a ProductionEfficiency, &'a str, f64, f64)>> {
     let mut usage: HashMap<&str, Vec<(&ProductionEfficiency, &str, f64, f64)>> = HashMap::new();
@@ -3223,8 +3246,8 @@ fn solve_environment_and_facility_allocation(
                 &trial_environment,
             );
             let mut items_per_facility: HashMap<&str, HashSet<&str>> = HashMap::new();
-            for ((facility, _chain_name, item_name), &count) in &trial_growers {
-                if count == 0 {
+            for ((facility, _chain_name, item_name), &count) in &trial_growers.by_chain {
+                if count <= 1e-9 {
                     continue;
                 }
                 items_per_facility.entry(facility.as_str()).or_default().insert(item_name.as_str());
@@ -3232,8 +3255,9 @@ fn solve_environment_and_facility_allocation(
             let contested_facilities: HashSet<&str> =
                 items_per_facility.into_iter().filter(|(_, items)| items.len() > 1).map(|(f, _)| f).collect();
             let mut sharing_candidates: Vec<&str> = trial_growers
+                .by_chain
                 .iter()
-                .filter(|((facility, _, _), &count)| count > 0 && contested_facilities.contains(facility.as_str()))
+                .filter(|((facility, _, _), &count)| count > 1e-9 && contested_facilities.contains(facility.as_str()))
                 .map(|((_, chain_name, _), _)| chain_name.as_str())
                 .collect::<HashSet<&str>>()
                 .into_iter()
