@@ -1575,7 +1575,7 @@ details.explain p {
 .ability-strip {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(58px, 1fr));
-    gap: 0.35rem;
+    gap: 1rem 0.35rem;
     margin: 0.85rem 0 0;
 }
 
@@ -1654,12 +1654,24 @@ details.explain p {
 }
 
 /* The Aniimo behind each ability count, one circle each. */
+/* One column per ability: its box, then its Aniimo circles below it. */
+.ability-col {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-width: 0;
+}
+
+.ability-col .ability-cell {
+    width: 100%;
+}
+
 .ability-stack {
     display: grid;
     grid-template-columns: 1fr;
     justify-items: center;
-    gap: 0.25rem;
-    margin-top: 0.4rem;
+    gap: 0.5rem;
+    margin-top: 0.6rem;
 }
 
 .ability-kind {

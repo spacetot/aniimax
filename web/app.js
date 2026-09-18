@@ -887,8 +887,10 @@ function renderAniimoSummary(plan) {
             dots.push(`<span class="ability-kind">${dot('Hauling', '·', false, 'Hauling, any level · carries produce to storage; add more if produce piles up')}</span>`);
         }
         const stack = dots.length ? `<div class="ability-stack">${dots.join('')}</div>` : '';
-        return `<div class="ability-cell${zero ? ' zero' : ''}" style="--ability:${a.color}">
-            <span class="ability-count" title="${a.name}: ${a.about}">${n}</span><span class="ability-name" title="${a.name}: ${a.about}">${a.name}</span>${stack}</div>`;
+        return `<div class="ability-col" style="--ability:${a.color}">
+            <div class="ability-cell${zero ? ' zero' : ''}" title="${a.name}: ${a.about}">
+                <span class="ability-count">${n}</span><span class="ability-name">${a.name}</span>
+            </div>${stack}</div>`;
     }).join('');
     container.innerHTML = `
         <div class="table-wrapper">
