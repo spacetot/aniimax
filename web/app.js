@@ -677,11 +677,22 @@ function renderLevelUp(plan) {
             <td>${ready}</td>
         </tr>`;
     }).join('');
+    // Coins keep coming in while the slower costs finish: what's on hand when everything's ready.
+    const coins = report.requirements.find(r => r.name === 'coins');
+    let coinsNote = '';
+    if (coins) {
+        const onHand = coins.have + coins.per_second * report.seconds;
+        const spare = onHand - coins.need;
+        if (spare >= 1) {
+            coinsNote = `<p class="level-up-coins">When it's ready you'll have <strong>${formatNumber(Math.floor(onHand))} coins</strong>, so <strong>${formatNumber(Math.floor(spare))}</strong> left after paying for the level-up.</p>`;
+        }
+    }
     lines.innerHTML = `
         <table class="level-up-lines">
             <thead><tr><th>Cost</th><th>Need</th><th>Have</th><th>Per hour</th><th>Ready in</th></tr></thead>
             <tbody>${rows}</tbody>
-        </table>`;
+        </table>
+        ${coinsNote}`;
 }
 
 // Get plan-level input values from the form (facilities/modules/prioritize-byproducts, nothing

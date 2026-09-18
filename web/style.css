@@ -1765,3 +1765,13 @@ details.explain p {
 .level-up-lines .slowest td {
     font-weight: 600;
 }
+
+.level-up-coins {
+    margin: 0.85rem 0 0;
+    font-size: 0.9rem;
+    color: var(--text-muted);
+}
+
+.level-up-coins strong {
+    color: var(--text);
+}
