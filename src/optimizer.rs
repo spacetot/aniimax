@@ -1996,14 +1996,67 @@ fn compute_coverage_weights(
 /// fast) `crate::coverage::solve_building_packing` call per building type, never mixed with the
 /// continuous item-rate LP in the same `Problem` (see `solve_facility_allocation`'s doc comment
 /// for why that combination hangs in practice).
+///
+/// Results are memoized per thread (see [`PACKING_CACHE`]): the exclusion passes in
+/// `find_production_plan` re-solve the same coverage weights many times over (excluding one recipe
+/// rarely changes any facility type's per-plot weight), and each packing solve is by far the most
+/// expensive step of a trial.
 fn solve_environment_coverage(
     weights: &HashMap<(&'static str, &'static str), f64>,
     facility_counts: &FacilityCounts,
-) -> (
+) -> EnvironmentCoverage {
+    let key = packing_cache_key(weights, facility_counts);
+    if let Some(hit) = PACKING_CACHE.with(|cache| cache.borrow().get(&key).cloned()) {
+        return hit;
+    }
+    let solved = solve_environment_coverage_uncached(weights, facility_counts);
+    PACKING_CACHE.with(|cache| cache.borrow_mut().insert(key, solved.clone()));
+    solved
+}
+
+/// `(mode_counts, placements, layouts)`; see [`solve_environment_coverage`].
+type EnvironmentCoverage = (
     HashMap<(&'static str, &'static str), u32>,
     HashMap<&'static str, Vec<(crate::coverage::Placement, u32)>>,
     HashMap<&'static str, Vec<Vec<crate::coverage::Placement>>>,
-) {
+);
+
+/// Everything a packing solve depends on: each `(facility type, mode)` weight (as exact bits, so
+/// only truly identical inputs share an entry) and the owned counts of every environment building
+/// and environment-gated facility type.
+type PackingCacheKey = (Vec<(&'static str, &'static str, u64)>, Vec<u32>);
+
+thread_local! {
+    /// Memoized [`solve_environment_coverage`] results. Cleared at the start of every
+    /// `find_production_plan_with_progress` call so it never grows past one plan's worth of
+    /// distinct inputs.
+    static PACKING_CACHE: std::cell::RefCell<HashMap<PackingCacheKey, EnvironmentCoverage>> =
+        std::cell::RefCell::new(HashMap::new());
+}
+
+fn packing_cache_key(
+    weights: &HashMap<(&'static str, &'static str), f64>,
+    facility_counts: &FacilityCounts,
+) -> PackingCacheKey {
+    let mut weight_bits: Vec<(&'static str, &'static str, u64)> =
+        weights.iter().map(|(&(facility, mode), w)| (facility, mode, w.to_bits())).collect();
+    weight_bits.sort_unstable();
+    let owned: Vec<u32> = ENVIRONMENT_BUILDINGS
+        .iter()
+        .map(|&(building, _)| facility_counts.get_count(building))
+        .chain(
+            crate::coverage::ENVIRONMENT_GATED_FACILITIES
+                .iter()
+                .map(|&(facility, _)| facility_counts.get_count(facility)),
+        )
+        .collect();
+    (weight_bits, owned)
+}
+
+fn solve_environment_coverage_uncached(
+    weights: &HashMap<(&'static str, &'static str), f64>,
+    facility_counts: &FacilityCounts,
+) -> EnvironmentCoverage {
     let mut mode_counts = HashMap::new();
     let mut placements: HashMap<&'static str, Vec<(crate::coverage::Placement, u32)>> = HashMap::new();
     let mut layouts: HashMap<&'static str, Vec<Vec<crate::coverage::Placement>>> = HashMap::new();
@@ -2082,7 +2135,57 @@ fn solve_environment_coverage(
 /// `find_production_plan`'s doc comment) to force the LP to hit at least that total byproduct
 /// rate, guaranteeing it before letting profit maximization use whatever facility capacity is
 /// left over. Pass an empty slice for the normal (profit-only) case.
+///
+/// Memoized per thread (see [`ALLOCATION_CACHE`]): the exclusion passes in
+/// `find_production_plan` solve the same candidate set against the same coverage many times.
 fn solve_facility_allocation<'a>(
+    item_map: &HashMap<&str, &ProductionItem>,
+    effs: &'a [ProductionEfficiency],
+    facility_counts: &FacilityCounts,
+    coverage_bounds: &HashMap<(String, String), u32>,
+    byproduct_floors: &[(&str, f64)],
+) -> HashMap<&'a str, f64> {
+    let key = allocation_cache_key(effs, coverage_bounds, byproduct_floors);
+    if let Some(rates) = ALLOCATION_CACHE.with(|cache| cache.borrow().get(&key).cloned()) {
+        let by_name: HashMap<&str, &'a str> = effs.iter().map(|e| (e.item.name.as_str(), e.item.name.as_str())).collect();
+        return rates.iter().filter_map(|(name, rate)| by_name.get(name.as_str()).map(|&n| (n, *rate))).collect();
+    }
+    let solved = solve_facility_allocation_uncached(item_map, effs, facility_counts, coverage_bounds, byproduct_floors);
+    let rates: Vec<(String, f64)> = solved.iter().map(|(&name, &rate)| (name.to_string(), rate)).collect();
+    ALLOCATION_CACHE.with(|cache| cache.borrow_mut().insert(key, rates));
+    solved
+}
+
+/// Everything one facility-allocation LP depends on within a single plan: each candidate's name
+/// and per-batch value (the byproduct-floor pre-solve prices the same items by byproduct instead
+/// of coins, so the name alone isn't enough), the coverage bounds, and the byproduct floors. Item
+/// data and facility counts are fixed for the length of one `find_production_plan` call, which is
+/// as long as the cache lives.
+type AllocationCacheKey = (Vec<(String, u64)>, Vec<(String, String, u32)>, Vec<(String, u64)>);
+
+thread_local! {
+    /// Memoized [`solve_facility_allocation`] results, as `(item name, rate)` pairs. Cleared at the
+    /// start of every `find_production_plan_with_progress` call.
+    static ALLOCATION_CACHE: std::cell::RefCell<HashMap<AllocationCacheKey, Vec<(String, f64)>>> =
+        std::cell::RefCell::new(HashMap::new());
+}
+
+fn allocation_cache_key(
+    effs: &[ProductionEfficiency],
+    coverage_bounds: &HashMap<(String, String), u32>,
+    byproduct_floors: &[(&str, f64)],
+) -> AllocationCacheKey {
+    let mut candidates: Vec<(String, u64)> =
+        effs.iter().map(|e| (e.item.name.clone(), e.batch_value.to_bits())).collect();
+    candidates.sort_unstable();
+    let mut bounds: Vec<(String, String, u32)> =
+        coverage_bounds.iter().map(|((f, m), &n)| (f.clone(), m.clone(), n)).collect();
+    bounds.sort_unstable();
+    let floors: Vec<(String, u64)> = byproduct_floors.iter().map(|(r, f)| (r.to_string(), f.to_bits())).collect();
+    (candidates, bounds, floors)
+}
+
+fn solve_facility_allocation_uncached<'a>(
     item_map: &HashMap<&str, &ProductionItem>,
     effs: &'a [ProductionEfficiency],
     facility_counts: &FacilityCounts,
@@ -3064,6 +3167,8 @@ pub fn find_production_plan_with_progress(
     prioritize_byproducts: bool,
     on_progress: Option<&dyn Fn(u32)>,
 ) -> Option<ProductionPlan> {
+    PACKING_CACHE.with(|cache| cache.borrow_mut().clear());
+    ALLOCATION_CACHE.with(|cache| cache.borrow_mut().clear());
     let item_map: HashMap<&str, &ProductionItem> =
         items.iter().map(|i| (i.name.as_str(), i)).collect();
 
@@ -3438,11 +3543,22 @@ pub fn find_production_plan_with_progress(
             budget_remaining -= cost;
             bounded_groups.push(group);
         }
-        for group in bounded_groups {
+        // A second cap, on LP solves rather than subsets: each subset re-runs the whole pipeline,
+        // whose own cost grows with how many recipes are in play, so at late-game RV levels the
+        // subset budget alone let one round spend ~17,000 LP solves (tens of seconds). Counting
+        // solves keeps it deterministic (no wall clock); since groups run smallest-first and
+        // subsets fewest-exclusions-first, what the cap cuts is the largest, least likely
+        // combinations. Measured on RV 9-20 setups: 3-7x faster, within ~1% of the uncapped plan.
+        const MAX_DEDICATED_SEARCH_TRIALS: u32 = 3000;
+        let dedicated_search_start = trial_count;
+        'groups: for group in bounded_groups {
             let n = group.len();
             let mut masks: Vec<u32> = (1..(1u32 << n)).collect();
             masks.sort_by_key(|mask| mask.count_ones());
             for mask in masks {
+                if trial_count - dedicated_search_start >= MAX_DEDICATED_SEARCH_TRIALS {
+                    break 'groups;
+                }
                 let to_exclude: Vec<&str> =
                     (0..n).filter(|&i| mask & (1 << i) != 0).map(|i| group[i].as_str()).collect();
                 let Some((
