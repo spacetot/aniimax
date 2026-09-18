@@ -715,11 +715,11 @@ function abilityTag(name) {
 }
 
 // A colored circle with the Aniimo level in it, for the facility plan's Aniimo column; the
-// tooltip has the ability, level, personality and what the ability does.
+// tooltip has the ability, level and personality.
 function abilityDot(name, level, note) {
     const a = ABILITY_BY_NAME.get(name);
     const color = a ? a.color : '#888888';
-    const tip = `${name} Lv.${level}${note ? ` · ${note}` : ''}${a ? ` — ${a.about}` : ''}`;
+    const tip = `${name} Lv.${level}${note ? ` · ${note}` : ''}`;
     return `<span class="ability-dot${a && a.dark ? ' dark' : ''}${note ? ' bonus' : ''}" style="--ability:${color}" title="${tip}" aria-label="${tip}">${level}</span>`;
 }
 
