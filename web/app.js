@@ -863,11 +863,32 @@ function renderAniimoSummary(plan) {
     // How many of each ability the plan needs, in the game's order, like its Abilities screen.
     const needed = new Map(ABILITIES.map(a => [a.name, 0]));
     kept.forEach(g => needed.set(g.ability, (needed.get(g.ability) || 0) + g.count));
+    // Under each count, one circle per kind of Aniimo (with "×N" when several are the same): its
+    // level inside (a dot for any level), a ring for the personality bonus, and what it's for in
+    // the tooltip.
+    const dot = (ability, text, bonus, tip) => {
+        const a = ABILITY_BY_NAME.get(ability);
+        return `<span class="ability-dot small${a && a.dark ? ' dark' : ''}${bonus ? ' bonus' : ''}" style="--ability:${a ? a.color : '#888888'}" title="${tip}" aria-label="${tip}">${text}</span>`;
+    };
+    const teamDots = g => {
+        const where = [...g.where.entries()].map(([place, n]) => `${n > 1 ? n + '× ' : ''}${place}`).join(', ');
+        const tip = `${g.count > 1 ? `${g.count}× ` : ''}${g.label}${g.bonus ? ' (+20% speed)' : ''} · ${where}`;
+        const times = g.count > 1 ? `<span class="ability-times">×${g.count}</span>` : '';
+        return `<span class="ability-kind">${dot(g.ability, g.environment ? '·' : g.level, g.bonus, tip)}${times}</span>`;
+    };
     document.getElementById('aniimo-abilities').innerHTML = ABILITIES.map(a => {
         const n = a.name === 'Hauling' ? `${needed.get(a.name) + 1}+` : needed.get(a.name);
         const zero = n === 0;
-        return `<div class="ability-cell${zero ? ' zero' : ''}" style="--ability:${a.color}" title="${a.name}: ${a.about}">
-            <span class="ability-count">${n}</span><span class="ability-name">${a.name}</span></div>`;
+        const dots = kept
+            .filter(g => g.ability === a.name)
+            .sort((x, y) => y.level - x.level || Number(y.bonus) - Number(x.bonus))
+            .map(teamDots);
+        if (a.name === 'Hauling') {
+            dots.push(`<span class="ability-kind">${dot('Hauling', '·', false, 'Hauling, any level · carries produce to storage; add more if produce piles up')}</span>`);
+        }
+        const stack = dots.length ? `<div class="ability-stack">${dots.join('')}</div>` : '';
+        return `<div class="ability-cell${zero ? ' zero' : ''}" style="--ability:${a.color}">
+            <span class="ability-count" title="${a.name}: ${a.about}">${n}</span><span class="ability-name" title="${a.name}: ${a.about}">${a.name}</span>${stack}</div>`;
     }).join('');
     container.innerHTML = `
         <div class="table-wrapper">
